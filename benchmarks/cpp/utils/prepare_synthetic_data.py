@@ -74,6 +74,8 @@ def token_norm_dist(root_args, **kwargs):
         print_text_dataset(
             input_ids,
             output_lens,
+            task_ids=task_ids if root_args.task_id != -1 or root_args.rand_task_id is not None else None,
+            lora_config={"lora_dir": root_args.lora_dir} if root_args.task_id != -1 or root_args.rand_task_id is not None else None
         )
 
 
@@ -144,4 +146,6 @@ def token_unif_dist(root_args, **kwargs):
         print_text_dataset(
             input_ids,
             output_lens,
+            task_ids=task_ids if root_args.task_id != -1 or root_args.rand_task_id is not None else None,
+            lora_config={"lora_dir": root_args.lora_dir} if root_args.task_id != -1 or root_args.rand_task_id is not None else None
         )

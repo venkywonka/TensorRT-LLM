@@ -18,7 +18,7 @@ Model pytorch yaml config for trtllm-bench perf tests
 """
 
 
-def get_model_yaml_config(model_label: str, input_lens: list[int]) -> dict:
+def get_model_yaml_config(model_label: str, input_lens: list[int], lora_dirs: list[str] = None) -> dict:
     """
         Return the yaml config corresponding to the model label.
         Args:
@@ -76,12 +76,30 @@ def get_model_yaml_config(model_label: str, input_lens: list[int]) -> dict:
                 'cuda_graph_batch_sizes':
                 [1, 2, 4, 8, 16, 32, 64, 128, 256, 384]
             },
-        }
+        },
+        'llama_v3.1_8b_instruct_fp8-bench-pytorch-float8':
+        {
+            'lora_config': {
+                'lora_dir': [*lora_dirs],
+                'max_lora_rank': 64,
+                'lora_target_modules': ['attn_q', 'attn_k', 'attn_v'],
+                'trtllm_modules_to_hf_modules': {
+                    "attn_q": "q_proj",
+                    "attn_k": "k_proj",
+                    "attn_v": "v_proj"
+                }
+            }
+        },
     }
-    # get model name from model_label
-    model_name = next(
-        (key for key in model_configs if key in model_label.lower()), None)
-    if model_name:
-        base_config.update(model_configs[model_name])
+
+    # lora-specific change for llama_v3.1_8b_instruct_fp8-bench-pytorch-float8
+    if 'llama_v3.1_8b_instruct_fp8-bench-pytorch-float8' in model_label and 'loras' in model_label:
+        base_config.update(model_configs['llama_v3.1_8b_instruct_fp8-bench-pytorch-float8'])
+    else:
+        # get model name from model_label
+        model_name = next(
+            (key for key in model_configs if key in model_label.lower()), None)
+        if model_name:
+            base_config.update(model_configs[model_name])
 
     return base_config

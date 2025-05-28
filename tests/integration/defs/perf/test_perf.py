@@ -115,6 +115,7 @@ HF_MODEL_PATH = {
 LORA_MODEL_PATH = {
     "llama_v2_13b": "llama-models-v2/chinese-llama-2-lora-13b",
     "mixtral_8x7b_0.1": "chinese-mixtral-lora",
+    "llama_v3.1_8b_instruct_fp8": "/home/gvenkatarama/scratch/TensorRT-LLM-Worktrees/b/logs/lora-perf/llama-3.1-8b-fp8/hf-squad-v1/llama3-8b-instruct-lora_vhf-squad-v1",
 }
 
 TIMING_CACHE_DIR = os.environ.get("TIMING_CACHE_DIR", "")
@@ -770,6 +771,7 @@ class MultiMetricPerfTest(AbstractPerfScriptTestClass):
         self._config.load_from_str(self._test_param_labels)
         # This will store the currently running metric.
         self._current_metric = None
+        self.lora_dirs = []
 
     def get_test_name(self) -> str:
         return str(self._config)
@@ -893,10 +895,10 @@ class MultiMetricPerfTest(AbstractPerfScriptTestClass):
                 build_cmd.append(f"attn_q")
                 build_cmd.append(f"attn_k")
                 build_cmd.append(f"attn_v")
-                build_cmd.append(f"attn_dense")
-                build_cmd.append(f"mlp_h_to_4h")
-                build_cmd.append(f"mlp_4h_to_h")
-                build_cmd.append(f"mlp_gate")
+                # build_cmd.append(f"attn_dense")
+                # build_cmd.append(f"mlp_h_to_4h")
+                # build_cmd.append(f"mlp_4h_to_h")
+                # build_cmd.append(f"mlp_gate")
         if TIMING_CACHE_DIR and not self._config.build_only:
             timing_cache = os.path.join(TIMING_CACHE_DIR, "model.cache")
             build_cmd.append(f"--input_timing_cache={timing_cache}")
@@ -998,27 +1000,64 @@ class MultiMetricPerfTest(AbstractPerfScriptTestClass):
             istdev = 16
             ostdev = 24
             nloras = self._config.num_loras
-            # lora_data = os.path.join(engine_dir,
-            #                          f"token-norm-dist-lora-{nloras}.json")
             dataset_path = os.path.join(engine_dir, "synthetic_data.json")
+
+            # For PyTorch backend, use the actual LoRA model path
+            if self._config.runtime == "bench" and self._config.backend == "pytorch":
+                if self._config.model_name in LORA_MODEL_PATH.keys():
+                    # Use the actual LoRA checkpoint path
+                    actual_lora_path = LORA_MODEL_PATH[self._config.model_name]
+                    if not actual_lora_path.startswith("/"):
+                        actual_lora_path = os.path.join(llm_models_root(), actual_lora_path)
+
+                    # Create a loras directory in engine_dir and symlink to actual LoRA
+                    lora_dir = os.path.join(engine_dir, "loras")
+
+                    # Create symlinks for each task_id pointing to the same LoRA
+                    # First create the directory
+                    data_cmd += [
+                        f"mkdir -p {lora_dir}",
+                        ";"
+                    ]
+                    # Then create symlinks as separate commands
+                    for i in range(nloras):
+                        self.lora_dirs.append(f"{lora_dir}/{i}")
+                        data_cmd += [
+                            f"ln -sf {actual_lora_path} {lora_dir}/{i}",
+                            ";"
+                        ]
+
+                    if nloras > 1:
+                        print_info(f"PyTorch backend: Creating {nloras} symlinks to the same LoRA adapter at {actual_lora_path}")
+                else:
+                    pytest.skip(f"No LoRA model path defined for {self._config.model_name} with PyTorch backend")
+            else:
+                # For C++ runtime, use the generated random weights directory
+                lora_dir = os.path.join(engine_dir, f"loras")
+
             data_cmd += [
                 "python3", prepare_data_script, f"--stdout",
-                f"--rand-task-id 0 {nloras-1}", f"--tokenizer={tokenizer_dir}",
-                f"token-norm-dist", f"--num-requests={self._config.num_reqs}",
-                f"--input-mean={input_len}", f"--output-mean={output_len}",
-                f"--input-stdev={istdev}", f"--output-stdev={ostdev}",
+                f"--rand-task-id 0 {nloras-1}",
+                f"--tokenizer={tokenizer_dir}",
+                f"--lora-dir={lora_dir}",  # Pass the full LoRA directory path
+                f"token-norm-dist",
+                f"--num-requests={self._config.num_reqs}",
+                f"--input-mean={input_len}",
+                f"--output-mean={output_len}",
+                f"--input-stdev={istdev}",
+                f"--output-stdev={ostdev}",
                 f" > {dataset_path}"
             ]
-            if self._config.runtime == "cppmanager":
+            # Only generate LoRA weights for C++ runtime, not for PyTorch backend
+            if self._config.runtime == "cppmanager" or (self._config.runtime == "bench" and self._config.backend != "pytorch"):
                 data_cmd += [";"]
                 generate_rand_lora_script = os.path.join(
                     self._llm_root, "benchmarks", "cpp", "utils",
                     "generate_rand_loras.py")
                 checkpoint_dir = os.path.join(engine_dir, "lora_cpp")
-                lora_dir = os.path.join(engine_dir, f"loras")
                 data_cmd += [
                     "python3", generate_rand_lora_script, checkpoint_dir,
-                    lora_dir, "16"
+                    lora_dir, str(nloras)
                 ]
         else:
             istdev = 0
@@ -1155,7 +1194,7 @@ class MultiMetricPerfTest(AbstractPerfScriptTestClass):
         #use default yaml config
         if self._config.backend == "pytorch":
             import yaml
-            config = get_model_yaml_config(self._config.to_string())
+            config = get_model_yaml_config(self._config.to_string(), self._config.input_lens, self.lora_dirs)
             with open('extra-llm-api-config.yml', 'w') as f:
                 yaml.dump(config, f, default_flow_style=False)
             benchmark_cmd += [
@@ -1253,6 +1292,8 @@ class MultiMetricPerfTest(AbstractPerfScriptTestClass):
                     model_dir = os.path.join(
                         llm_models_root(),
                         LORA_MODEL_PATH[self._config.model_name])
+                    if self._config.model_name == "llama_v3.1_8b":
+                        model_dir = LORA_MODEL_PATH[self._config.model_name]
                     convert_lora_cmd, lora_checkpoint_dir = self.get_convert_lora_weights_command(
                         model_dir, engine_dir)
                     convert_cmd += [";"]
