@@ -16,3 +16,7 @@ TensorRT-LLM also includes Python and C++ backends for NVIDIA Triton Inference S
 ## Model Weights
 
 TensorRT-LLM is a library for LLM inference, and so to use it, you need to supply a set of trained weights. You can either use your own model weights trained in a framework like [NVIDIA NeMo](https://www.nvidia.com/en-us/ai-data-science/generative-ai/nemo-framework/) or pull a set of pretrained weights from repositories like the Hugging Face Hub.
+
+## Detailed Architecture Diagram
+
+For a visual representation of the end-to-end TensorRT-LLM workflow, including the offline model preparation steps and the online runtime components, please refer to the {ref}`detailed-trtllm-architecture` page. This diagram also illustrates how features like PEFT (LoRA) and low-latency optimizations (e.g., Eagle speculative decoding) are integrated.
