@@ -40,3 +40,71 @@ The diagram is divided into several key flows:
 *   **Utility Methods:** The diagram also lists several utility methods like `get_max_num_sequences`, `set_lora_model_config`, `load_weights_from_target_model`, and `_release_cuda_graphs` that support the main flows.
 
 The styling in the diagram (colors for entry, core, prep, model, util nodes) helps differentiate the types of operations occurring at each step.
+
+---
+
+## LLM API to PyTorch Model Call Sequence
+
+The following sequence diagram details the typical call stack when a user interacts with the high-level `LLM` API (using the PyTorch backend) through to the actual PyTorch model's forward pass. This illustrates the initialization, warmup, and generation phases from a sequential perspective.
+
+```eval_rst
+.. image:: pytorch_call_sequence.svg
+   :alt: PyTorch Backend Call Sequence
+   :align: center
+```
+
+### Sequence Diagram Explanation
+
+This diagram shows the interaction between several key components:
+
+1.  **User:** Initiates actions like creating an `LLM` object or calling `generate()`.
+2.  **LLM API (`tensorrt_llm.llm.LLM`):** The high-level user-facing API.
+3.  **PyTorchConfig (`tensorrt_llm._torch.pyexecutor.config.PyTorchConfig`):** Holds configuration relevant to the PyTorch backend execution.
+4.  **PyTorchModelEngine (`tensorrt_llm._torch.pyexecutor.model_engine.ModelEngine`):** The component described in the previous diagram, responsible for managing the PyTorch model execution.
+5.  **Model Loader (`tensorrt_llm._torch.pyexecutor.model_engine._load_model` context):** Handles the specifics of loading the model weights and configuration.
+6.  **Warmup Manager (`tensorrt_llm._torch.pyexecutor.warmup_manager.WarmupManager`):** Manages the warmup process, including CUDA graph capture and autotuning if enabled.
+7.  **CUDA Graphs:** Represents the CUDA graph capture and execution mechanism.
+8.  **Torch Compile:** Represents the `torch.compile` feature for optimizing the model.
+
+**Key Phases and Interactions:**
+
+*   **Initialization Phase (User calls `LLM(...)`):**
+    *   `User` -> `LLM API`: `LLM(model_path, backend='pytorch')`
+    *   `LLM API` -> `PyTorchConfig`: Creates a configuration object.
+    *   `LLM API` -> `PyTorchModelEngine`: `__init__(config, mapping, ...)` is called.
+        *   `PyTorchModelEngine` stores basic configurations.
+        *   `PyTorchModelEngine` -> `Model Loader`: `_load_model()` is invoked.
+            *   `Model Loader` loads `ModelConfig` (e.g., from Hugging Face pretrained), validates KV cache quantization, loads the PyTorch model using `AutoModelForCausalLM.from_config()`, moves it to CUDA, and loads weights (or initializes dummy weights).
+        *   `PyTorchModelEngine` initializes its capacity (`_init_model_capacity`, `_init_max_seq_len`, `_init_max_num_tokens`) and user buffers (`_init_userbuffers`).
+        *   `PyTorchModelEngine` -> `Torch Compile`: Sets up `torch.compile` backend if configured.
+        *   `PyTorchModelEngine` initializes its attention backend and CUDA graph configurations.
+    *   `LLM API` returns the initialized engine to the `User`.
+
+*   **Warmup Phase (triggered by `LLM` initialization or explicitly):**
+    *   `LLM API` -> `Warmup Manager`: `warmup(resource_manager)`
+    *   **If Torch Compile Enabled:**
+        *   `Warmup Manager` -> `Torch Compile`: Enables optimization.
+        *   `Warmup Manager` -> `PyTorchModelEngine`: Creates dummy context and generation requests and calls `forward()` for each. This allows `torch.compile` to optimize the model based on observed execution.
+        *   `Torch Compile` -> `Warmup Manager`: Returns compilation complete status.
+    *   **If Autotuner Enabled:**
+        *   `Warmup Manager`: Enables autotune mode.
+        *   `Warmup Manager` -> `PyTorchModelEngine`: Creates a max-length request and calls `forward()`.
+        *   `Warmup Manager`: Caches optimization results from the autotuner.
+    *   **If CUDA Graphs Enabled:**
+        *   `Warmup Manager` -> `CUDA Graphs`: Creates CUDA graph instances.
+        *   `Warmup Manager` -> `PyTorchModelEngine`: Creates dummy generation requests for different batch sizes (loop).
+            *   `PyTorchModelEngine` -> `CUDA Graphs`: Calls `forward()` to capture the CUDA graph for the specific batch size.
+            *   `CUDA Graphs` stores the `DecodingCUDAGraphRunner`.
+        *   **If Piecewise CUDA Graph is enabled (alt within the loop):**
+            *   `Warmup Manager` -> `PyTorchModelEngine`: Creates piecewise warmup requests and calls `forward()` multiple times.
+            *   `PyTorchModelEngine` -> `CUDA Graphs`: Captures piecewise graphs.
+    *   `Warmup Manager` -> `LLM API`: Warmup complete.
+    *   `LLM API` -> `User`: Engine is ready for inference.
+
+*   **Generation Phase (User calls `generate(...)`):**
+    *   `User` -> `LLM API`: `generate(prompt)`
+    *   `LLM API` -> `PyTorchModelEngine`: `forward(scheduled_requests)` (The LLM API would typically handle scheduling and batching before this call).
+    *   The `PyTorchModelEngine` then executes its internal forward logic as detailed in its own flowchart (previous diagram), potentially using captured CUDA graphs or `torch.compile` optimized code.
+    *   `PyTorchModelEngine` -> `LLM API`: Returns generated tokens.
+
+This sequence diagram provides a high-level overview of how these components collaborate during different operational phases of the PyTorch backend in TensorRT-LLM.
