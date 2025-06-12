@@ -123,6 +123,36 @@ In file `jenkins/L0_Test.groovy`, the variables `x86TestConfigs`, `SBSATestConfi
 
 Currently the yml files are manually maintained, which requires developer to update them when new test cases are added.
 
+### Mapping tests to Jenkins stages
+
+Each entry in the YAML files contains a `stage` tag (`pre_merge` or `post_merge`) and a `backend` tag. `L0_Test.groovy` maps these YAML files to Jenkins stage names. For example:
+
+```groovy
+    "A100X-Triton-Python-[Post-Merge]-1": ["a100x", "l0_a100", 1, 2],
+    "A100X-Triton-Python-[Post-Merge]-2": ["a100x", "l0_a100", 2, 2],
+```
+
+`triton_server/test_triton.py::test_gpt_ib_ptuning[gpt-ib-ptuning]` appears in `l0_a100.yml` with `stage: post_merge` and `backend: triton`, so it runs in the two A100X post‑merge stages above.
+
+To trigger the same tests on a pull request, comment:
+
+```bash
+/bot run --stage-list "A100X-Triton-Python-[Post-Merge]-1,A100X-Triton-Python-[Post-Merge]-2"
+```
+
+### Triggering CI politely
+
+Avoid running the full post‑merge pipeline unless necessary. Use `/bot run --stage-list` to run only specific stages, or `/bot run --extra-stage` to add stages on top of the default pre‑merge set. Both options accept any stage name defined in `L0_Test.groovy`.
+
+### Waiving tests
+
+Known failing tests can be listed in `tests/integration/test_lists/waives.txt`. CI passes this file to pytest via `--waives-file`, so the listed tests are skipped automatically. Each line should optionally include a reason or bug link, for example:
+
+```text
+examples/test_openai.py::test_llm_openai_triton_1gpu SKIP (https://nvbugspro.nvidia.com/bug/4963654)
+full:GH200/examples/test_qwen2audio.py::test_llm_qwen2audio_single_gpu[qwen2_audio_7b_instruct] SKIP (arm is not supported)
+```
+
 ### How to choose GPU type
 
 The CI resource of each GPU type is different. Usually you should choose the cheapest GPU that fulfills test requirements. In most cases, an integration test case should only run on one GPU type, unless it's very important or has different behaviours on different GPUs.

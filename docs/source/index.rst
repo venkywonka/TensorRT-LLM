@@ -132,6 +132,7 @@ Welcome to TensorRT-LLM's Documentation!
 
    reference/precision.md
    reference/memory.md
+   dev-tools/test-stage-query-tool.md
 
 
 .. toctree::
