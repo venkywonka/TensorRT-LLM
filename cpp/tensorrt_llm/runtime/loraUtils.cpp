@@ -105,6 +105,11 @@ void loraValidateRequestTensors(std::optional<std::uint64_t> const& optTaskId,
                 loraModules.begin(), loraModules.end(), [modId](LoraModule const& m) { return m.value() == modId; });
             std::string moduleName(LoraModule::toModuleName(modId));
             TLLM_CHECK_WITH_INFO(it != loraModules.end(), "lora module " + moduleName + " not enabled for this model");
+            // print the shape of the weights tensor
+            std::cout << "weights shape: " << weights->getShape().d[2] << std::endl;
+            std::cout << "adapterSize: " << adapterSize << std::endl;
+            std::cout << "isDora: " << isDora << std::endl;
+            std::cout << "it->flattenedInOutSize(adapterSize, isDora): " << it->flattenedInOutSize(adapterSize, isDora) << std::endl;
             TLLM_CHECK_WITH_INFO(it->flattenedInOutSize(adapterSize, isDora) <= weights->getShape().d[2],
                 "lora_weights has to few values for " + moduleName);
             TLLM_CHECK_WITH_INFO(adapterSize <= maxAdapterSize,
