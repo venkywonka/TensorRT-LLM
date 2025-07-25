@@ -12,6 +12,18 @@ jobs:
   auto-label-issue:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate required secrets
+        run: |
+          if [[ -z "${{ secrets.GOGGLES_ACTION_REPO_TOKEN }}" ]]; then
+            echo "Error: GOGGLES_ACTION_REPO_TOKEN secret is not set"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.GOGGLES_LLM_MODEL_NAME }}" ]]; then
+            echo "Error: GOGGLES_LLM_MODEL_NAME secret is not set"
+            exit 1
+          fi
+          echo "All required secrets are configured"
+
       - name: Checkout private action repository
         uses: actions/checkout@v4
         with:
@@ -21,7 +33,9 @@ jobs:
           ref: v1.2.1
 
       - name: Use LLM to label the issue
+        id: label_issue
         uses: ./.github/actions/goggles_action/actions/llm_label
+        continue-on-error: true
         with:
           ACTION_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LLM_MODEL_NAME: ${{ secrets.GOGGLES_LLM_MODEL_NAME }}
@@ -45,3 +59,12 @@ jobs:
             Respond with ONLY the chosen label name (e.g., 'bug', 'feature-request') or comma-separated names if multiple are truly needed.
             If no labels seem appropriate, respond with 'NONE'.
             Do not add any other text, explanation, or markdown formatting.
+
+      - name: Handle labeling failure
+        if: steps.label_issue.outcome == 'failure'
+        run: |
+          echo "⚠️ Auto-labeling failed. Issue #${{ github.event.issue.number }} will need manual labeling."
+          echo "This could be due to:"
+          echo "- External service unavailability"
+          echo "- Missing or invalid secrets"
+          echo "- Network connectivity issues"
