@@ -480,6 +480,7 @@ class ModelConfig(Generic[TConfig]):
             (x.ffn.ffn_mult if x.ffn.ffn_mult is not None else 0)
             for x in self.pretrained_config.block_configs
         ])
+        print(f"🔍 DEBUG: biggest_ffn_mult = {biggest_ffn_mult}")
 
         from tensorrt_llm._torch.models.modeling_nemotron_nas import \
             _ffn_mult_to_intermediate_size
