@@ -442,38 +442,16 @@ class PyTorchModelEngine(ModelEngine):
                               lora_target_modules: list[str],
                               trtllm_modules_to_hf_modules: dict[str, str],
                               swap_gate_up_proj_lora_b_weight: bool = True):
-        # Get proper rank for debugging
-        rank = "UNKNOWN"
-        try:
-            if torch.distributed.is_initialized():
-                rank = torch.distributed.get_rank()
-            else:
-                import os
-                if 'RANK' in os.environ:
-                    rank = int(os.environ['RANK'])
-                elif 'LOCAL_RANK' in os.environ:
-                    rank = int(os.environ['LOCAL_RANK'])
-                elif 'OMPI_COMM_WORLD_RANK' in os.environ:
-                    rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
-        except Exception as e:
-            rank = f"RANK_ERR_{e}"
-
-        print(f"🚀 MODEL_ENGINE [RANK {rank}]: set_lora_model_config called")
-
-        # Compute Nemotron-NAS global dimensions directly here
+            # Compute Nemotron-NAS global dimensions directly here
         global_mlp_hidden_size = None
         is_nemotron_nas_variable_ffn = False
 
         try:
             config = self.model.model_config.pretrained_config
             archs = getattr(config, "architectures", None) or []
-            print(f"🚀 MODEL_ENGINE [RANK {rank}]: archs = {archs}")
 
             if (len(archs) == 1 and archs[0] == "DeciLMForCausalLM"
                     and hasattr(config, "block_configs")):
-                print(
-                    f"🚀 MODEL_ENGINE [RANK {rank}]: DETECTED NEMOTRON-NAS! Computing global dimensions..."
-                )
                 # This is Nemotron-NAS with variable FFN
                 is_nemotron_nas_variable_ffn = True
                 from tensorrt_llm._torch.models.modeling_nemotron_nas import \
@@ -489,21 +467,10 @@ class PyTorchModelEngine(ModelEngine):
                     self, 'mapping') else 1
                 global_mlp_hidden_size = mlp_hidden_size_maybe_tp_split * tp_size
 
-                print(
-                    f"🚀 MODEL_ENGINE [RANK {rank}]: _ffn_mult_to_intermediate_size returned {mlp_hidden_size_maybe_tp_split}"
-                )
-                print(
-                    f"🚀 MODEL_ENGINE [RANK {rank}]: tp_size={tp_size}, global_mlp_hidden_size={global_mlp_hidden_size}"
-                )
                 logger.info(
                     f"Detected Nemotron-NAS: global_mlp_hidden_size={global_mlp_hidden_size} (tp_size={tp_size})"
                 )
-            else:
-                print(f"🔍 MODEL_ENGINE [RANK {rank}]: NOT Nemotron-NAS")
         except Exception as e:
-            print(
-                f"🔍 MODEL_ENGINE [RANK {rank}]: Exception in Nemotron-NAS detection: {e}"
-            )
             logger.warning(f"Failed to detect Nemotron-NAS: {e}")
 
         self.lora_model_config = LoraModelConfig(
@@ -514,10 +481,6 @@ class PyTorchModelEngine(ModelEngine):
             swap_gate_up_proj_lora_b_weight=swap_gate_up_proj_lora_b_weight,
             global_mlp_hidden_size=global_mlp_hidden_size,
             is_nemotron_nas_variable_ffn=is_nemotron_nas_variable_ffn)
-
-        print(
-            f"🚀 MODEL_ENGINE [RANK {rank}]: Created self.lora_model_config: {vars(self.lora_model_config)}"
-        )
 
     @property
     def use_mrope(self):
