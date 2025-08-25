@@ -53,7 +53,7 @@ from ..speculative import SpecMetadata, get_spec_metadata
 from ..utils import (get_model_extra_attrs, set_torch_compiling,
                      with_model_extra_attrs)
 from .config import LoadFormat, PyTorchConfig
-from .config_utils import is_mla
+from .config_utils import is_mla, is_nemotron_nas
 from .cuda_graph_runner import DecodingCUDAGraphRunner
 from .layerwise_nvtx_marker import LayerwiseNvtxMarker
 from .llm_request import get_draft_token_length
@@ -442,46 +442,17 @@ class PyTorchModelEngine(ModelEngine):
             self.cache_indirection_attention = None
 
     def set_lora_model_config(self, lora_target_modules: list[str],
-                              trtllm_modules_to_hf_modules: dict[str, str]):
-
-        # Compute Nemotron-NAS global dimensions directly here
-        global_mlp_hidden_size = None
-        is_nemotron_nas_variable_ffn = False
-
-        try:
-            config = self.model.model_config.pretrained_config
-            archs = getattr(config, "architectures", None) or []
-
-            if (len(archs) == 1 and archs[0] == "DeciLMForCausalLM"
-                    and hasattr(config, "block_configs")):
-                # This is Nemotron-NAS with variable FFN
-                is_nemotron_nas_variable_ffn = True
-                from tensorrt_llm._torch.models.modeling_nemotron_nas import \
-                    _ffn_mult_to_intermediate_size
-                biggest_ffn_mult = max(
-                    (x.ffn.ffn_mult or 0) for x in config.block_configs)
-                mlp_hidden_size_maybe_tp_split = int(
-                    _ffn_mult_to_intermediate_size(biggest_ffn_mult,
-                                                   int(config.hidden_size)))
-                # CRITICAL: Ensure we store the GLOBAL (unsplit) size for C++ expectations
-                # _ffn_mult_to_intermediate_size might return TP-split size, so multiply by tp_size if needed
-                tp_size = getattr(self.mapping, 'tp_size', 1) if hasattr(
-                    self, 'mapping') else 1
-                global_mlp_hidden_size = mlp_hidden_size_maybe_tp_split * tp_size
-
-                logger.info(
-                    f"Detected Nemotron-NAS: global_mlp_hidden_size={global_mlp_hidden_size} (tp_size={tp_size})"
-                )
-        except Exception as e:
-            logger.warning(f"Failed to detect Nemotron-NAS: {e}")
+                              trtllm_modules_to_hf_modules: dict[str, str],
+                              mlp_hidden_size: int) -> "LoraModelConfig":
 
         self.lora_model_config = LoraModelConfig(
             lora_target_modules=lora_target_modules,
             trtllm_modules_to_hf_modules=trtllm_modules_to_hf_modules,
             hidden_size=self.model.config.hidden_size,
             dtype=torch_dtype_to_str(self.model.config.torch_dtype),
-            global_mlp_hidden_size=global_mlp_hidden_size,
-            is_nemotron_nas_variable_ffn=is_nemotron_nas_variable_ffn)
+            mlp_hidden_size=mlp_hidden_size,
+            is_variable_ffn=is_nemotron_nas(
+                self.model.model_config.pretrained_config))
 
     @property
     def use_mrope(self):

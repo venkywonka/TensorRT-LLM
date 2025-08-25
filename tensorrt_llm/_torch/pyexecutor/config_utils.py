@@ -11,3 +11,11 @@ def is_mla(config):
         ), "both of kv_lora_rank and qk_rope_head_dim are required."
         return True
     return False
+
+
+def is_nemotron_nas(config):
+    if hasattr(config, "architectures") and config.architectures is not None:
+        architectures = config.architectures
+        return len(
+            architectures) == 1 and architectures[0] == "DeciLMForCausalLM"
+    return False

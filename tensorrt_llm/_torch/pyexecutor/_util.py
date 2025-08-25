@@ -447,7 +447,6 @@ def create_py_executor_instance(
                 lora_config.trtllm_modules_to_hf_modules = get_default_trtllm_modules_to_hf_modules(
                 )
 
-                # Nemotron-NAS global dimensions are now computed in model_engine.set_lora_model_config
         model_binding_config = model_engine.model.model_config.get_bindings_model_config(
         )
 
@@ -473,11 +472,6 @@ def create_py_executor_instance(
             attention_head_size=model_binding_config.head_size,
             tp_size=mapping.tp_size,
             num_experts=num_experts)
-        logger.warning(f"lora rank: {lora_config.max_lora_rank}")
-        logger.warning(
-            f"mlp_4h_to_h in: {model_binding_config.mlp_hidden_size}")
-        logger.warning(f"mlp_4h_to_h out: {model_binding_config.hidden_size}")
-        logger.warning(f"tp_size: {mapping.tp_size}")
         model_binding_config.use_lora_plugin = True
         model_binding_config.lora_modules = lora_modules
         model_binding_config.max_lora_rank = lora_config.max_lora_rank
@@ -506,19 +500,18 @@ def create_py_executor_instance(
             rank=dist.mapping.rank,
             gpus_per_node=dist.mapping.gpus_per_node,
         )
-        # Compute global dimensions FIRST so PeftCacheManager can use them
+
         model_engine.set_lora_model_config(
             lora_config.lora_target_modules,
-            lora_config.trtllm_modules_to_hf_modules)
+            lora_config.trtllm_modules_to_hf_modules,
+            model_binding_config.mlp_hidden_size * mapping.tp_size)
 
         peft_cache_manager = PeftCacheManager(
             peft_cache_config=executor_config.peft_cache_config,
             lora_config=lora_config,
             model_config=model_binding_config,
             world_config=world_config,
-            lora_model_config=model_engine.
-            lora_model_config  # Direct dependency injection
-        )
+            lora_model_config=model_engine.lora_model_config)
         resources[ResourceManagerType.PEFT_CACHE_MANAGER] = peft_cache_manager
 
     max_num_sequences = executor_config.max_batch_size * mapping.pp_size

@@ -8,7 +8,8 @@ import torch
 import transformers
 
 from tensorrt_llm import logger
-from tensorrt_llm._torch.pyexecutor.config_utils import is_nemotron_hybrid
+from tensorrt_llm._torch.pyexecutor.config_utils import (is_nemotron_hybrid,
+                                                         is_nemotron_nas)
 from tensorrt_llm._utils import get_sm_version, torch_dtype_to_binding
 from tensorrt_llm.bindings import LayerType as LayerTypeCpp
 from tensorrt_llm.functional import AllReduceStrategy
@@ -431,19 +432,15 @@ class ModelConfig(Generic[TConfig]):
         mlp_hidden_size = None
         if self.pretrained_config.intermediate_size is not None:
             mlp_hidden_size = self.pretrained_config.intermediate_size // self.mapping.tp_size
-        else:
+        elif is_nemotron_nas(self.pretrained_config):
             # TODO: once tensorrt_llm._torch.AutoConfig is implemented, the following logic
             # should be moved to tensorrt_llm._torch.AutoConfig of the relevant modeling_xxx file
-            if hasattr(self.pretrained_config, "architectures"
-                       ) and self.pretrained_config.architectures is not None:
-                architectures = self.pretrained_config.architectures
-                if len(architectures
-                       ) == 1 and architectures[0] == "DeciLMForCausalLM":
-                    mlp_hidden_size = self._infer_nemotron_ffn_mult()
-                else:
-                    raise ValueError(
-                        f"Inferring mlp hidden size for model architecture: {architectures} isn't supported yet"
-                    )
+            mlp_hidden_size = self._infer_nemotron_ffn_mult()
+        else:
+            raise ValueError(
+                f"Inferring mlp hidden size for model architecture: {self.pretrained_config.architectures} isn't supported yet"
+            )
+
         if mlp_hidden_size is None:
             raise ValueError(
                 f"Failed to infer mlp hidden size for model: {self.pretrained_config.model_type}"
@@ -480,7 +477,6 @@ class ModelConfig(Generic[TConfig]):
             (x.ffn.ffn_mult if x.ffn.ffn_mult is not None else 0)
             for x in self.pretrained_config.block_configs
         ])
-        print(f"🔍 DEBUG: biggest_ffn_mult = {biggest_ffn_mult}")
 
         from tensorrt_llm._torch.models.modeling_nemotron_nas import \
             _ffn_mult_to_intermediate_size

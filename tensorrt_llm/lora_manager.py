@@ -241,13 +241,6 @@ class LoraConfig(DictConversion):
     trtllm_modules_to_hf_modules: Dict[str, str] = field(default_factory=dict)
     max_loras: int | None = None
     max_cpu_loras: int | None = None
-    # Optional runtime-derived attributes to avoid threading full ModelConfig
-    # These are global (non-TP-split) sizes
-    hidden_size: Optional[int] = None
-    dtype: Optional[str] = None
-    global_mlp_hidden_size: Optional[int] = None
-    # True only for Nemotron-NAS with variable FFN per layer
-    is_nemotron_nas_variable_ffn: Optional[bool] = None
 
     def __post_init__(self):
         assert self.lora_ckpt_source in ["hf", "nemo"], (
@@ -265,11 +258,9 @@ class LoraModelConfig:
     trtllm_modules_to_hf_modules: dict[str, str]
     hidden_size: int
     dtype: str
-    # Optional runtime-derived attributes to avoid threading full ModelConfig
-    # These are global (non-TP-split) sizes
-    global_mlp_hidden_size: Optional[int] = None
-    # True only for Nemotron-NAS with variable FFN per layer
-    is_nemotron_nas_variable_ffn: Optional[bool] = None
+    mlp_hidden_size: int
+    # True if the model has a variable FFN architecture (e.g., Nemotron-NAS)
+    is_variable_ffn: bool = False
 
 
 class HfLoraLoader:
@@ -1201,7 +1192,6 @@ class LoraManager(object):
                     )
 
             max_weight_size = max(w.size(0) for w in self._cpp_lora_weights[uid])
-            logger.info(f"HF LoRA UID {uid}: max_weight_size={max_weight_size}")
             self._cpp_lora_weights[uid] = torch.stack(
                 [
                     torch.nn.functional.pad(w, (0, max_weight_size - w.size(0)))
@@ -1245,36 +1235,46 @@ class LoraManager(object):
         model_config,
         is_dora: bool,
     ) -> torch.Tensor:
-        """Package LoRA weights for C++ consumption with proper padding if needed."""
+        """Package LoRA weights for C++ consumption with proper padding."""
         t_in_cpu = t_in.flatten().cpu()
         t_out_cpu = t_out.flatten().cpu()
 
-        # Check if global stride padding is needed for variable FFN architectures
-        H = getattr(model_config, "hidden_size", None)
-        M_coarse = getattr(model_config, "global_mlp_hidden_size", None)
-
-        use_global_stride = (
+        if (
             lora_module == "mlp_4h_to_h"
-            and H is not None
-            and H > 0
-            and M_coarse is not None
-            and M_coarse > 0
-        )
-
-        if use_global_stride:
-            # Apply global stride padding for variable FFN architectures (Nemotron-NAS)
-            # Row layout expected by C++: [A (r*M_coarse_global)] [B (H*r)] [mag (H, if DoRA)]
+            and model_config.mlp_hidden_size > 0
+            and model_config.is_variable_ffn
+        ):
+            # Nemotron-NAS variable FFN architecture requires extra padding logic
+            # to make sure the `mlp_hidden_size` calculated over all layers
+            # is the lower-bound for the padding.
+            # the calculated mlp_hidden_size corresponds to that of the largest mlp.
+            # for details on how the mlp_hidden_size is calculated, see:
+            # tensorrt_llm/_torch/model_config.py::ModelConfig._infer_nemotron_ffn_mult
             r = int(t_in.shape[0])
-            A_len_actual = t_in_cpu.numel()  # r * M_layer_tp
-            A_len_target = r * M_coarse  # r * M_coarse_global (should be global from model_engine)
-            B_len_actual = t_out_cpu.numel()  # H_tp * r
-            B_len_target = r * H  # H * r (global, unsplit)
-            mag_len = int(H) if (is_dora and t_mag is not None) else 0
+
+            # Calculate actual and target sizes
+            A_len_actual = t_in_cpu.numel()  # r * actual_input_size
+            A_len_target = r * model_config.mlp_hidden_size  # r * padded_input_size
+            B_len_actual = t_out_cpu.numel()  # actual_output_size * r
+            B_len_target = r * model_config.hidden_size  # padded_output_size * r
+            mag_len = model_config.hidden_size if (is_dora and t_mag is not None) else 0
+
+            # Validate that padding sizes are at least as large as actual sizes
+            assert A_len_target >= A_len_actual, (
+                f"LoRA {lora_module}: target A size ({A_len_target}) < actual "
+                f"({A_len_actual}), this is not expected. Please check "
+                "Nemotron-NAS model and lora checkpoint are compatible."
+            )
+            assert B_len_target >= B_len_actual, (
+                f"LoRA {lora_module}: target B size ({B_len_target}) < actual "
+                f"({B_len_actual}), this is not expected. Please check "
+                "Nemotron-NAS model and lora checkpoint are compatible."
+            )
 
             dest_len = A_len_target + B_len_target + mag_len
             row_cpu = torch.zeros(dest_len, dtype=t_in_cpu.dtype)
 
-            # Fill A at [0 : A_len_actual], leave the rest as zero padding
+            # Fill A at [0 : A_len_actual], remaining space is zero-padded
             row_cpu[0:A_len_actual] = t_in_cpu
 
             # Place B starting at offset A_len_target
