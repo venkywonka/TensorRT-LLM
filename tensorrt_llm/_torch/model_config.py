@@ -7,17 +7,9 @@ import torch
 import transformers
 
 from tensorrt_llm import logger
-
-<<<<<<< HEAD
-from tensorrt_llm._torch.pyexecutor.config_utils import is_nemotron_hybrid
-from tensorrt_llm._utils import torch_dtype_to_binding
-
-=======
 from tensorrt_llm._torch.pyexecutor.config_utils import (is_nemotron_hybrid,
                                                          is_nemotron_nas)
-from tensorrt_llm._utils import get_sm_version, torch_dtype_to_binding
-
->>>>>>> b579db8a39 (refine)
+from tensorrt_llm._utils import torch_dtype_to_binding
 from tensorrt_llm.bindings import LayerType as LayerTypeCpp
 from tensorrt_llm.functional import AllReduceStrategy
 from tensorrt_llm.logger import logger
