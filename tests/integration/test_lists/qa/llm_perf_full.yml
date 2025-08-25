@@ -316,12 +316,6 @@ llm_perf_full:
   - perf/test_perf.py::test_perf[llama_v4_scout_17b_16e_instruct_fp8-bench-pytorch-float8-kv_frac:0.85-input_output_len:128,128-ep:8-tp:8-gpus:8]
   - perf/test_perf.py::test_perf[llama_v4_scout_17b_16e_instruct_fp8-bench-pytorch-float8-kv_frac:0.85-input_output_len:512,32-ep:8-tp:8-gpus:8]
 
-  #llama_v4_scout_17b_16e_instruct
-  #pytorch backend
-  - perf/test_perf.py::test_perf[llama_v4_scout_17b_16e_instruct-bench-pytorch-bfloat16-input_output_len:128,128-ep:8-tp:8-gpus:8]
-  - perf/test_perf.py::test_perf[llama_v4_scout_17b_16e_instruct-bench-pytorch-streaming-bfloat16-input_output_len:128,128-ep:8-tp:8-gpus:8]
-  - perf/test_perf.py::test_perf[llama_v4_scout_17b_16e_instruct-bench-pytorch-bfloat16-input_output_len:500,2000-ep:8-tp:8-gpus:8]
-  - perf/test_perf.py::test_perf[llama_v4_scout_17b_16e_instruct-bench-pytorch-bfloat16-input_output_len:2000,500-ep:8-tp:8-gpus:8]
   #deepseek_r1_fp8
   #pytorch backend
   - perf/test_perf.py::test_perf[deepseek_r1_fp8-bench-pytorch-float8-maxbs:32-input_output_len:128,128-ep:8-tp:8-gpus:8]
@@ -331,7 +325,10 @@ llm_perf_full:
   - perf/test_perf.py::test_perf[deepseek_r1_fp8-bench-pytorch-float8-maxbs:128-maxnt:1127-input_output_len:1000,2000-reqs:5120-con:1024-ep:8-tp:8-gpus:8] TIMEOUT(80) #max throughput test
   - perf/test_perf.py::test_perf[deepseek_r1_0528_fp8-bench-pytorch-float8-input_output_len:1000,1000-reqs:20000-ep:8-tp:8-gpus:8] TIMEOUT(120)
   - perf/test_perf.py::test_perf[deepseek_r1_0528_fp8-bench-pytorch-float8-input_output_len:1000,2000-reqs:3000-ep:8-tp:8-gpus:8] TIMEOUT(100)
-  # qwen3_235b_a22b_fp8
+  - perf/test_perf.py::test_perf[llama_v4_scout_17b_16e_instruct-bench-pytorch-bfloat16-input_output_len:128,128-ep:8-tp:8-gpus:8]
+  - perf/test_perf.py::test_perf[llama_v4_scout_17b_16e_instruct-bench-pytorch-streaming-bfloat16-input_output_len:128,128-ep:8-tp:8-gpus:8]
+  - perf/test_perf.py::test_perf[llama_v4_scout_17b_16e_instruct-bench-pytorch-bfloat16-input_output_len:500,2000-ep:8-tp:8-gpus:8]
+  - perf/test_perf.py::test_perf[llama_v4_scout_17b_16e_instruct-bench-pytorch-bfloat16-input_output_len:2000,500-ep:8-tp:8-gpus:8]
   - perf/test_perf.py::test_perf[qwen3_235b_a22b_fp8-bench-pytorch-float8-input_output_len:1000,2000-con:256-ep:8-gpus:8] TIMEOUT(45)
 
 

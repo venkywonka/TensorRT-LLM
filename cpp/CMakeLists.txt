@@ -215,6 +215,7 @@ endif()
 include_directories(
   SYSTEM
   ${CUDAToolkit_INCLUDE_DIRS}
+  ${CUDAToolkit_INCLUDE_DIRS}/cccl
   ${CUDNN_ROOT_DIR}/include
   $<TARGET_PROPERTY:TensorRT::NvInfer,INTERFACE_INCLUDE_DIRECTORIES>
   ${3RDPARTY_DIR}/cutlass/include
@@ -477,7 +478,6 @@ print(os.path.dirname(torch.__file__),end='');"
       endif()
     endif()
   endif()
-
 else()
   if(NOT WIN32)
     if(NOT USE_CXX11_ABI)
