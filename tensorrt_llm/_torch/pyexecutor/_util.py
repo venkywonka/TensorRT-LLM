@@ -516,8 +516,8 @@ def create_py_executor_instance(
             lora_config=lora_config,
             model_config=model_binding_config,
             world_config=world_config,
-            model_engine=
-            model_engine,  # Pass model_engine so it can use the computed lora_model_config
+            lora_model_config=model_engine.
+            lora_model_config  # Direct dependency injection
         )
         resources[ResourceManagerType.PEFT_CACHE_MANAGER] = peft_cache_manager
 

@@ -1184,7 +1184,7 @@ class PeftCacheManager(BaseResourceManager):
                  lora_config: LoraConfig,
                  model_config: ModelConfig,
                  world_config: WorldConfig | None = None,
-                 model_engine=None):
+                 lora_model_config: Optional[LoraModelConfig] = None):
         import tensorrt_llm.bindings as _tb
 
         peft_cache_manager_config = _tb.PeftCacheManagerConfig(
@@ -1215,26 +1215,16 @@ class PeftCacheManager(BaseResourceManager):
                                         buffer_manager=buffer_manager)
         self._lora_config = lora_config
 
-        # Use the LoraModelConfig computed by model_engine (with global dimensions)
-        if model_engine is not None and hasattr(model_engine,
-                                                'lora_model_config'):
-            self._lora_model_config = model_engine.lora_model_config
-            print(
-                f"🚀 RESOURCE: Using model_engine.lora_model_config: {vars(self._lora_model_config)}"
-            )
+        # Use the provided LoraModelConfig or create a fallback
+        if lora_model_config is not None:
+            self._lora_model_config = lora_model_config
         else:
             # Fallback: create LoraModelConfig without global dimensions (old behavior)
-            print(
-                f"🔍 RESOURCE: model_engine.lora_model_config not available, creating fallback"
-            )
             self._lora_model_config = LoraModelConfig(
                 lora_config.lora_target_modules,
                 lora_config.trtllm_modules_to_hf_modules,
                 model_config.hidden_size,
                 binding_to_str_dtype(model_config.data_type))
-            print(
-                f"🔍 RESOURCE: Created fallback LoraModelConfig: {vars(self._lora_model_config)}"
-            )
         self._lora_manager = LoraManager()
 
     def add_request_peft(self, request: LlmRequest):
@@ -1246,9 +1236,6 @@ class PeftCacheManager(BaseResourceManager):
                 # cached, we can safely remove both from the request.
                 request.remove_lora_tensors()
             elif request.lora_weights is None and request.py_lora_path:
-                print(
-                    f"🎯 ABOUT TO CALL load_from_ckpt with _lora_model_config: {vars(self._lora_model_config)}"
-                )
                 self._lora_manager.load_from_ckpt(
                     [request.py_lora_path],
                     model_config=self._lora_model_config,

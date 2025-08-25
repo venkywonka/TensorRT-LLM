@@ -802,53 +802,18 @@ class LoraManager(object):
         uids: Optional[List[str]] = None,
         ckpt_source: str = "hf",
     ) -> List[str]:
-        # Debug what model_config looks like when it arrives at LoraManager
-        # Get proper rank from available sources
-        cpu_rank = "UNKNOWN"
-        try:
-            if torch.distributed.is_initialized():
-                cpu_rank = torch.distributed.get_rank()
-            else:
-                # Try to get rank from environment variables (common in multi-GPU setups)
-                import os
-
-                if "RANK" in os.environ:
-                    cpu_rank = int(os.environ["RANK"])
-                elif "LOCAL_RANK" in os.environ:
-                    cpu_rank = int(os.environ["LOCAL_RANK"])
-                elif "OMPI_COMM_WORLD_RANK" in os.environ:
-                    cpu_rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
-        except Exception as e:
-            cpu_rank = f"RANK_ERR_{e}"
-
-        print(f"🔍 LORA_MANAGER ENTRY [RANK {cpu_rank}]: model_config type = {type(model_config)}")
-        print(f"🔍 LORA_MANAGER ENTRY [RANK {cpu_rank}]: vars(model_config) = {vars(model_config)}")
-        dbg_gmlp = getattr(model_config, "global_mlp_hidden_size", "ATTR_NOT_FOUND")
-        dbg_varffn = getattr(model_config, "is_nemotron_nas_variable_ffn", "ATTR_NOT_FOUND")
-        print(
-            f"🔍 LORA_MANAGER ENTRY [RANK {cpu_rank}]: "
-            f"model_config.global_mlp_hidden_size = {dbg_gmlp}"
-        )
-        print(
-            f"🔍 LORA_MANAGER ENTRY [RANK {cpu_rank}]: "
-            f"model_config.is_nemotron_nas_variable_ffn = {dbg_varffn}"
-        )
         """Returns the adapter UIDs that were loaded by this call.
 
         Note that when an adapter was already loaded before this call, it would not be
         included in the returned list of UIDs.
         """
         if ckpt_source == "hf":
-            before_gmlp = getattr(model_config, "global_mlp_hidden_size", "ATTR_NOT_FOUND")
-            print(f"🔍 BEFORE load_from_hf: model_config.global_mlp_hidden_size = {before_gmlp}")
-            result = self.load_from_hf(
+            return self.load_from_hf(
                 model_dirs=model_dirs_or_files,
                 model_config=model_config,
                 runtime_mapping=runtime_mapping,
                 uids=uids,
             )
-            print(f"🔍 AFTER load_from_hf: returning {result}")
-            return result
         elif ckpt_source == "nemo":
             # Find all .nemo files from directories or files
             nemo_files = find_nemo_files(model_dirs_or_files)
@@ -989,13 +954,6 @@ class LoraManager(object):
         uids: Optional[List[str]] = None,
         component: Optional[str] = None,
     ) -> List[str]:
-        # Debug what model_config looks like at the start of load_from_hf
-        print(f"🔍 LOAD_FROM_HF ENTRY: model_config type = {type(model_config)}")
-        print(f"🔍 LOAD_FROM_HF ENTRY: vars(model_config) = {vars(model_config)}")
-        entry_gmlp = getattr(model_config, "global_mlp_hidden_size", "ATTR_NOT_FOUND")
-        entry_varffn = getattr(model_config, "is_nemotron_nas_variable_ffn", "ATTR_NOT_FOUND")
-        print(f"🔍 LOAD_FROM_HF ENTRY: model_config.global_mlp_hidden_size = {entry_gmlp}")
-        print(f"🔍 LOAD_FROM_HF ENTRY: model_config.is_nemotron_nas_variable_ffn = {entry_varffn}")
         """Returns the adapter UIDs that were loaded by this call.
 
         Note that when an adapter was already loaded before this call, it would not be
@@ -1229,128 +1187,11 @@ class LoraManager(object):
                     if is_dora and t_mag is not None:
                         self._lora_weights.append(t_mag)
 
-                    t_in_cpu = t_in.flatten().cpu()
-                    t_out_cpu = t_out.flatten().cpu()
-
-                    print(f"🎯 PROCESSING MODULE: {lora_module} at layer {layer_idx}")
-
-                    # Use global dimensions computed by model_engine.set_lora_model_config
-                    H = getattr(model_config, "hidden_size", None)
-                    M_coarse = getattr(model_config, "global_mlp_hidden_size", None)
-
-                    # Get tp_size early (needed for both global stride and regular processing)
-
-                    print(
-                        f"🎯 VALUES: H={H}, M_coarse={M_coarse}, tp_size={tp_size} (from model_engine)"
+                    # Package LoRA weights for C++ consumption
+                    packaged_weights = self._package_lora_weights(
+                        lora_module, t_in, t_out, t_mag, model_config, is_dora
                     )
-
-                    # Get proper rank from available sources
-                    cpu_rank = "UNKNOWN"
-                    try:
-                        if torch.distributed.is_initialized():
-                            cpu_rank = torch.distributed.get_rank()
-                        else:
-                            # Try to get rank from environment variables (common in multi-GPU setups)
-                            import os
-
-                            if "RANK" in os.environ:
-                                cpu_rank = int(os.environ["RANK"])
-                            elif "LOCAL_RANK" in os.environ:
-                                cpu_rank = int(os.environ["LOCAL_RANK"])
-                            elif "OMPI_COMM_WORLD_RANK" in os.environ:
-                                cpu_rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
-                    except Exception as e:
-                        cpu_rank = f"RANK_ERR_{e}"
-
-                    # Debug logging to understand why padding isn't happening
-                    print(
-                        f"🔍 DEBUG [RANK {cpu_rank}]: lora_module={lora_module}, H={H}, M_coarse={M_coarse}"
-                    )
-                    print(f"🔍 DEBUG [RANK {cpu_rank}]: model_config type: {type(model_config)}")
-                    print(
-                        f"🔍 DEBUG [RANK {cpu_rank}]: model_config attributes: {vars(model_config)}"
-                    )
-
-                    use_global_stride = (
-                        lora_module == "mlp_4h_to_h"
-                        and H is not None
-                        and H > 0
-                        and M_coarse is not None
-                        and M_coarse > 0
-                    )
-
-                    print(
-                        f"🔍 DEBUG [RANK {cpu_rank}]: use_global_stride={use_global_stride} "
-                        f"for module {lora_module} (H={H}, M_coarse={M_coarse})"
-                    )
-
-                    if use_global_stride:
-                        # Row layout expected by C++: [A (r*M_coarse_global)] [B (H*r)] [mag (H, if DoRA)]
-                        # Compute sizes using actual tensors
-                        r = int(t_in.shape[0])
-                        A_len_actual = t_in_cpu.numel()  # r * M_layer_tp
-
-                        # CRITICAL FIX: M_coarse from model_engine might be TP-split or global, ensure it's global
-                        # The model_engine should now provide global size, but add safety check
-                        M_coarse_global = M_coarse  # Should already be global from model_engine
-
-                        A_len_target = r * M_coarse_global  # r * M_coarse_global (unsplit)
-                        B_len_actual = t_out_cpu.numel()  # H_tp * r
-                        B_len_target = r * H  # H * r (global, unsplit)
-                        mag_len = int(H) if (is_dora and t_mag is not None) else 0
-
-                        print(
-                            "🚀 GLOBAL SIZE CONVERSION: "
-                            f"M_coarse_tp={M_coarse}, tp_size={tp_size}, "
-                            f"M_coarse_global={M_coarse_global}"
-                        )
-
-                        dest_len = A_len_target + B_len_target + mag_len
-                        row_cpu = torch.zeros(dest_len, dtype=t_in_cpu.dtype)
-
-                        print(f"🚀 APPLYING GLOBAL STRIDE PADDING for {lora_module}:")
-                        print(
-                            f"   r={r}, M_coarse_tp={M_coarse}, "
-                            f"M_coarse_global={M_coarse_global}, H={H}, tp_size={tp_size}"
-                        )
-                        print(f"   A_len_actual={A_len_actual}, A_len_target={A_len_target}")
-                        print(f"   B_len_actual={B_len_actual}, B_len_target={B_len_target}")
-                        print(
-                            f"   dest_len={dest_len}, old_concat_len={A_len_actual + B_len_actual}"
-                        )
-                        print(
-                            f"   Expected C++ LHS: {dest_len}, Actual C++ RHS: {A_len_actual + B_len_actual}"
-                        )
-
-                        # Fill A at [0 : A_len_actual], leave the rest of A pad to A_len_target as zeros
-                        row_cpu[0:A_len_actual] = t_in_cpu
-
-                        # Place B starting at offset A_len_target; fill only the local slice
-                        row_cpu[A_len_target : A_len_target + B_len_actual] = t_out_cpu
-
-                        # If DoRA, place magnitude vector right after B (global H)
-                        if is_dora and t_mag is not None:
-                            t_mag_cpu = t_mag.flatten().cpu()
-                            row_cpu[
-                                A_len_target + B_len_target : A_len_target
-                                + B_len_target
-                                + t_mag_cpu.numel()
-                            ] = t_mag_cpu
-
-                        self._cpp_lora_weights[uid].append(row_cpu)
-                        print(f"   ✅ Applied padding! Final tensor size: {row_cpu.numel()}")
-                        # Debug logging for sanity checks
-                        logger.debug(
-                            f"mlp_4h_to_h global stride: layer={layer_idx}, r={r}, "
-                            f"M_coarse={M_coarse}, H={H}, A_len_target={A_len_target}, "
-                            f"B_len_target={B_len_target}, dest_len={dest_len}"
-                        )
-                    else:
-                        weights_to_concat = [t_in_cpu, t_out_cpu]
-                        if is_dora and t_mag is not None:
-                            t_mag_cpu = t_mag.flatten().cpu()
-                            weights_to_concat.append(t_mag_cpu)
-                        self._cpp_lora_weights[uid].append(torch.cat(weights_to_concat))
+                    self._cpp_lora_weights[uid].append(packaged_weights)
 
                     self._cpp_lora_config[uid].append(
                         torch.tensor(
@@ -1360,8 +1201,6 @@ class LoraManager(object):
                     )
 
             max_weight_size = max(w.size(0) for w in self._cpp_lora_weights[uid])
-            # max_weight_size = 3932160
-            print(f"📊 HF LoRA UID {uid}: max_weight_size={max_weight_size}")
             logger.info(f"HF LoRA UID {uid}: max_weight_size={max_weight_size}")
             self._cpp_lora_weights[uid] = torch.stack(
                 [
@@ -1396,6 +1235,66 @@ class LoraManager(object):
     def uid_to_low_ranks(self, uid: str):
         assert isinstance(uid, str)
         return self._lora_uid_to_low_ranks[uid]
+
+    def _package_lora_weights(
+        self,
+        lora_module: str,
+        t_in: torch.Tensor,
+        t_out: torch.Tensor,
+        t_mag: Optional[torch.Tensor],
+        model_config,
+        is_dora: bool,
+    ) -> torch.Tensor:
+        """Package LoRA weights for C++ consumption with proper padding if needed."""
+        t_in_cpu = t_in.flatten().cpu()
+        t_out_cpu = t_out.flatten().cpu()
+
+        # Check if global stride padding is needed for variable FFN architectures
+        H = getattr(model_config, "hidden_size", None)
+        M_coarse = getattr(model_config, "global_mlp_hidden_size", None)
+
+        use_global_stride = (
+            lora_module == "mlp_4h_to_h"
+            and H is not None
+            and H > 0
+            and M_coarse is not None
+            and M_coarse > 0
+        )
+
+        if use_global_stride:
+            # Apply global stride padding for variable FFN architectures (Nemotron-NAS)
+            # Row layout expected by C++: [A (r*M_coarse_global)] [B (H*r)] [mag (H, if DoRA)]
+            r = int(t_in.shape[0])
+            A_len_actual = t_in_cpu.numel()  # r * M_layer_tp
+            A_len_target = r * M_coarse  # r * M_coarse_global (should be global from model_engine)
+            B_len_actual = t_out_cpu.numel()  # H_tp * r
+            B_len_target = r * H  # H * r (global, unsplit)
+            mag_len = int(H) if (is_dora and t_mag is not None) else 0
+
+            dest_len = A_len_target + B_len_target + mag_len
+            row_cpu = torch.zeros(dest_len, dtype=t_in_cpu.dtype)
+
+            # Fill A at [0 : A_len_actual], leave the rest as zero padding
+            row_cpu[0:A_len_actual] = t_in_cpu
+
+            # Place B starting at offset A_len_target
+            row_cpu[A_len_target : A_len_target + B_len_actual] = t_out_cpu
+
+            # If DoRA, place magnitude vector after B
+            if is_dora and t_mag is not None:
+                t_mag_cpu = t_mag.flatten().cpu()
+                row_cpu[
+                    A_len_target + B_len_target : A_len_target + B_len_target + t_mag_cpu.numel()
+                ] = t_mag_cpu
+
+            return row_cpu
+        else:
+            # Standard concatenation for uniform architectures
+            weights_to_concat = [t_in_cpu, t_out_cpu]
+            if is_dora and t_mag is not None:
+                t_mag_cpu = t_mag.flatten().cpu()
+                weights_to_concat.append(t_mag_cpu)
+            return torch.cat(weights_to_concat)
 
     def _generate_uid(self):
         while str(self._lora_uid_counter) in self._lora_uid_to_low_ranks:
