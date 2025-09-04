@@ -743,6 +743,15 @@ def createKubernetesPodConfig(image, type, arch = "amd64", gpuCount = 1, perfMod
                     path: /vol/scratch1/scratch.svc_tensorrt_blossom
         """
     }
+    // TODO: remove this after GH200 driver upgrade
+    def hostnameMatch = ""
+    if (type == "gh200") {
+        hostnameMatch = """
+                              - key: "kubernetes.io/hostname"
+                                operator: In
+                                values:
+                                - "lego-cg1-qct-069.ipp3a2.colossus\""""
+    }
     def podConfig = [
         cloud: targetCould,
         namespace: "sw-tensorrt",
@@ -757,12 +766,10 @@ def createKubernetesPodConfig(image, type, arch = "amd64", gpuCount = 1, perfMod
                         requiredDuringSchedulingIgnoredDuringExecution:
                             nodeSelectorTerms:
                             - matchExpressions:
-                              - key: "tensorrt/taints"
-                                operator: DoesNotExist
                               - key: "tensorrt/affinity"
                                 operator: NotIn
                                 values:
-                                - "core"
+                                - "core"${hostnameMatch}
                 nodeSelector: ${selectors}
                 containers:
                   ${containerConfig}
