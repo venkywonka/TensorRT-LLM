@@ -30,6 +30,9 @@ from tensorrt_llm.llmapi.reasoning_parser import ReasoningParserFactory
 from tensorrt_llm.logger import logger, severity_map
 from tensorrt_llm.serve import OpenAIDisaggServer, OpenAIServer
 
+# Import configure command
+from tensorrt_llm.commands.configure import configure
+
 # Global variable to store the Popen object of the child process
 _child_p_global: Optional[subprocess.Popen] = None
 
@@ -760,6 +763,7 @@ class DefaultGroup(click.Group):
 main = DefaultGroup(
     commands={
         "serve": serve,
+        "configure": configure,
         "disaggregated": disaggregated,
         "disaggregated_mpi_worker": disaggregated_mpi_worker,
         "mm_embedding_serve": serve_encoder
