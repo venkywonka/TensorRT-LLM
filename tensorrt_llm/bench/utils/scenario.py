@@ -69,14 +69,14 @@ def merge_params_with_priority(
         Merged parameter dictionary
 
     Example:
-        >>> cli = {'concurrency': 128, 'model': None}
-        >>> scenario = {'target_concurrency': 256, 'model': 'gpt-3'}
-        >>> defaults = {'concurrency': -1, 'model': None}
+        >>> cli = {'concurrency': 128, 'tp': 1}
+        >>> scenario = {'target_concurrency': 256, 'tp_size': 4}
+        >>> defaults = {'concurrency': -1, 'tp': 1}
         >>> merged = merge_params_with_priority(cli, scenario, defaults)
         >>> print(merged['concurrency'])  # CLI explicitly set
         128
-        >>> print(merged['model'])  # From scenario
-        'gpt-3'
+        >>> print(merged['tp'])  # From scenario (tp_size -> tp)
+        4
     """
     if scenario is None:
         return cli_params.copy()
@@ -123,9 +123,7 @@ def validate_scenario_params(scenario: Dict[str, Any]) -> None:
     Raises:
         ValueError: If scenario parameters are invalid
     """
-    required_fields = [
-        'model', 'target_isl', 'target_osl', 'target_concurrency'
-    ]
+    required_fields = ['target_isl', 'target_osl', 'target_concurrency']
 
     # Check required fields
     for field in required_fields:
