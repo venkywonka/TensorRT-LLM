@@ -98,7 +98,7 @@ def get_llm_args(
         reasoning_parser: Optional[str] = None,
         fail_fast_on_attention_window_too_large: bool = False,
         otlp_traces_endpoint: Optional[str] = None,
-        enable_chunked_prefill: bool = False,
+        enable_chunked_prefill: bool = True,
         **llm_args_extra_dict: Any):
 
     if gpus_per_node is None:
