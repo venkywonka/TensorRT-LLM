@@ -363,7 +363,7 @@ class ChoiceWithAlias(click.Choice):
               help="URI of the disaggregated cluster.")
 @click.option("--enable_chunked_prefill",
               is_flag=True,
-              default=False,
+              default=True,
               help="Enable chunked prefill")
 @click.option("--media_io_kwargs",
               type=str,
