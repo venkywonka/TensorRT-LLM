@@ -1,0 +1,8 @@
+Generate text in streaming
+==========================
+Source https://github.com/NVIDIA/TensorRT-LLM/blob/a66e65518d5d6bbb0846de87bcdcafa91cbba896/examples/llm-api/llm_inference_async_streaming.py.
+
+.. literalinclude:: ../../../examples/llm-api/llm_inference_async_streaming.py
+    :lines: 4-64
+    :language: python
+    :linenos:
