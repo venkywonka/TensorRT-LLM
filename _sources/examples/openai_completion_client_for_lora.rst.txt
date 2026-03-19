@@ -2,7 +2,7 @@ Openai Completion Client For Lora
 =================================
 Refer to the `trtllm-serve documentation <https://nvidia.github.io/TensorRT-LLM/commands/trtllm-serve.html>`_ for starting a server.
 
-Source https://github.com/NVIDIA/TensorRT-LLM/blob/a66e65518d5d6bbb0846de87bcdcafa91cbba896/examples/serve/openai_completion_client_for_lora.py.
+Source https://github.com/NVIDIA/TensorRT-LLM/blob/a29e31dce3c551b90bb7db93c044cd0e7ba08e30/examples/serve/openai_completion_client_for_lora.py.
 
 .. literalinclude:: ../../../examples/serve/openai_completion_client_for_lora.py
     :lines: 1-30
