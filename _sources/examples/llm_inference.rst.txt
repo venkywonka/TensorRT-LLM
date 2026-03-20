@@ -1,6 +1,6 @@
 Generate text
 =============
-Source https://github.com/NVIDIA/TensorRT-LLM/blob/a29e31dce3c551b90bb7db93c044cd0e7ba08e30/examples/llm-api/llm_inference.py.
+Source https://github.com/NVIDIA/TensorRT-LLM/blob/852f6af5440791e42e841d5dd15f41b455ad5150/examples/llm-api/llm_inference.py.
 
 .. literalinclude:: ../../../examples/llm-api/llm_inference.py
     :lines: 4-35
