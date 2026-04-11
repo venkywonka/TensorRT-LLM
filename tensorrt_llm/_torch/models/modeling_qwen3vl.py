@@ -256,6 +256,26 @@ class Qwen3VLInputProcessorBase(BaseMultimodalInputProcessor, BaseMultimodalDumm
 
             return position_ids, mrope_position_deltas
 
+    def get_num_tokens_per_video(self, *, video: List, **kwargs) -> int:
+        """Calculate the actual number of video tokens for Qwen3-VL.
+
+        The base class fallback computes num_frames * tokens_per_image / temporal_patch_size,
+        but this doesn't match the HF processor's actual behavior which applies temporal
+        grouping and spatial merging. We run the HF processor on a dummy prompt to get
+        the exact token count, matching what _preprocess will produce at inference time.
+        """
+        dummy_prompt = "<|vision_start|><|video_pad|><|vision_end|>"
+        do_rescale = not isinstance(video[0], torch.Tensor)
+        processed = self.processor(
+            text=[dummy_prompt],
+            videos=[video],
+            padding=True,
+            do_rescale=do_rescale,
+            return_tensors="pt",
+        )
+        video_token_id = self.config.video_token_id
+        return (processed["input_ids"][0] == video_token_id).sum().item()
+
     def _preprocess(
         self, text: Dict[str, Any], mm_data: Dict[str, Any], mm_processor_kwargs: Dict[str, Any]
     ):
