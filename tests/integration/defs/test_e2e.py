@@ -2123,6 +2123,11 @@ def test_ptp_quickstart_multimodal_kv_cache_reuse(llm_root, llm_venv,
             # Lower threshold to give some wiggle room for flakiness.
             0.6,
             marks=pytest.mark.skip_less_device_memory(80000)),
+        pytest.param(
+            "qwen3-vl-8b-instruct",
+            "Qwen3/Qwen3-VL-8B-Instruct",
+            0.6,
+            marks=pytest.mark.skip_less_device_memory(40000)),
     ])
 def test_ptp_quickstart_multimodal_chunked_prefill(llm_root, llm_venv,
                                                    model_name, model_path,
@@ -2173,6 +2178,17 @@ def test_ptp_quickstart_multimodal_chunked_prefill(llm_root, llm_venv,
                     "multi-lane", "highway", "moderate", "traffic", "flow",
                     "vehicles", "congestion"
                 ],
+            ],
+        },
+        "qwen3-vl-8b-instruct": {
+            "image": [
+                ["ocean", "cloud", "wave", "sea", "beach"],
+                ["bench", "park", "dog", "building", "tree"],
+                ["traffic", "road", "vehicle", "car", "signal"],
+            ],
+            "video": [
+                ["street", "walk", "night", "neon", "city", "woman"],
+                ["globe", "earth", "world", "map", "spin"],
             ],
         },
     }
