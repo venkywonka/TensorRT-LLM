@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 import zmq
 
-from tensorrt_llm._torch.visual_gen.config import DiffusionArgs
+from tensorrt_llm._torch.visual_gen.config import VisualGenArgs
 from tensorrt_llm._torch.visual_gen.output import MediaOutput
 from tensorrt_llm._torch.visual_gen.pipeline_loader import PipelineLoader
 from tensorrt_llm.executor.ipc import ZeroMqQueue
@@ -21,7 +21,7 @@ class DiffusionRequest:
     """Request for diffusion inference with explicit model-specific parameters."""
 
     request_id: int
-    prompt: str
+    prompt: List[str]
     negative_prompt: Optional[str] = None
     height: int = 720
     width: int = 1280
@@ -41,8 +41,19 @@ class DiffusionRequest:
     guidance_rescale: float = 0.0
     output_type: str = "pt"
 
-    # Wan-specific parameters
+    # LTX-2 multi-modal guidance (STG / modality guidance)
+    stg_scale: float = 0.0
+    stg_blocks: Optional[List[int]] = None
+    modality_scale: float = 1.0
+    rescale_scale: float = 0.0
+    guidance_skip_step: int = 0
+    enhance_prompt: bool = False
+
+    # Image-to-video parameters
     image: Optional[Union[str, List[str]]] = None
+    image_cond_strength: float = 1.0
+
+    # Wan-specific parameters
     guidance_scale_2: Optional[float] = None
     boundary_ratio: Optional[float] = None
     last_image: Optional[Union[str, List[str]]] = None
@@ -68,17 +79,18 @@ class DiffusionExecutor:
 
     def __init__(
         self,
-        model_path: str,
         request_queue_addr: str,
         response_queue_addr: str,
         device_id: int,
-        diffusion_config: Optional[dict] = None,
+        diffusion_args: "VisualGenArgs",
+        req_hmac_key: Optional[bytes] = None,
+        resp_hmac_key: Optional[bytes] = None,
     ):
-        self.model_path = model_path
         self.request_queue_addr = request_queue_addr
         self.response_queue_addr = response_queue_addr
         self.device_id = device_id
-        self.diffusion_config = diffusion_config
+        self.diffusion_args = diffusion_args
+        self.resp_hmac_key = resp_hmac_key
 
         self.pipeline = None  # initialized in _load_pipeline
         self.requests_ipc = None
@@ -90,10 +102,10 @@ class DiffusionExecutor:
         if self.rank == 0:
             logger.info(f"Worker {device_id}: Connecting to request queue")
             self.requests_ipc = ZeroMqQueue(
-                (request_queue_addr, None),
+                (request_queue_addr, req_hmac_key),
                 is_server=False,
                 socket_type=zmq.PULL,
-                use_hmac_encryption=False,
+                use_hmac_encryption=True,
             )
             self.sender_thread = threading.Thread(target=self._sender_loop, daemon=True)
             self.sender_thread.start()
@@ -104,10 +116,10 @@ class DiffusionExecutor:
         """Background thread for sending responses."""
         logger.info(f"Worker {self.device_id}: Connecting to response queue")
         responses_ipc = ZeroMqQueue(
-            (self.response_queue_addr, None),
+            (self.response_queue_addr, self.resp_hmac_key),
             is_server=False,
             socket_type=zmq.PUSH,
-            use_hmac_encryption=False,
+            use_hmac_encryption=True,
         )
 
         while True:
@@ -126,27 +138,15 @@ class DiffusionExecutor:
     def _load_pipeline(self):
         """
         Load pipeline using proper flow:
-        DiffusionArgs → PipelineLoader → DiffusionModelConfig → AutoPipeline → BasePipeline
+        VisualGenArgs → PipelineLoader → DiffusionModelConfig → AutoPipeline → BasePipeline
         """
         logger.info(f"Worker {self.device_id}: Loading pipeline")
 
         try:
-            # Convert diffusion_config dict to DiffusionArgs
-            config_dict = self.diffusion_config.copy()
-            config_dict["checkpoint_path"] = self.model_path
-            config_dict["device"] = f"cuda:{self.device_id}"
+            args = self.diffusion_args.model_copy(update={"device": f"cuda:{self.device_id}"})
 
-            # Create DiffusionArgs from dict (handles nested configs)
-            args = DiffusionArgs.from_dict(config_dict)
-
-            # Use PipelineLoader for proper pipeline creation flow:
-            # PipelineLoader.load() internally:
-            #   1. Creates DiffusionModelConfig.from_pretrained()
-            #   2. Creates pipeline via AutoPipeline.from_config()
-            #   3. Loads weights with quantization support
-            #   4. Calls post_load_weights()
             loader = PipelineLoader(args)
-            self.pipeline = loader.load()
+            self.pipeline = loader.load(skip_warmup=args.skip_warmup)
 
         except Exception as e:
             logger.error(f"Worker {self.device_id}: Failed to load pipeline: {e}")
@@ -187,15 +187,13 @@ class DiffusionExecutor:
 
     def process_request(self, req: DiffusionRequest):
         """Process a single request."""
-        if (
-            self.pipeline.common_warmup_shapes
-            and (req.height, req.width, req.num_frames) not in self.pipeline.common_warmup_shapes
-        ):
+        cache_key = self.pipeline.warmup_cache_key(req.height, req.width, num_frames=req.num_frames)
+        if self.pipeline._warmed_up_shapes and cache_key not in self.pipeline._warmed_up_shapes:
             logger.warning(
-                f"Requested shape (height={req.height}, width={req.width}, num_frames={req.num_frames}) "
-                f"was not warmed up. First request with this shape will be slower due to "
-                "torch.compile recompilation or CUDA graph capture."
-                f"Warmed-up shapes: {self.pipeline.common_warmup_shapes}"
+                f"Requested shape {cache_key} was not warmed up. "
+                f"First request with this shape will be slower due to "
+                f"torch.compile recompilation or CUDA graph capture. "
+                f"Warmed-up shapes: {self.pipeline._warmed_up_shapes}"
             )
         try:
             output = self.pipeline.infer(req)
@@ -215,19 +213,27 @@ def run_diffusion_worker(
     world_size: int,
     master_addr: str,
     master_port: int,
-    model_path: str,
     request_queue_addr: str,
     response_queue_addr: str,
-    diffusion_config: Optional[dict] = None,
+    diffusion_args: "VisualGenArgs",
+    log_level: str = "info",
+    req_hmac_key: Optional[bytes] = None,
+    resp_hmac_key: Optional[bytes] = None,
 ):
     """Entry point for worker process."""
     try:
+        # Set log level before any other work so loading logs are visible
+        logger.set_level(log_level)
+
         # Setup distributed env — use PyTorch distributed, not MPI
         os.environ["TLLM_DISABLE_MPI"] = "1"
         os.environ["MASTER_ADDR"] = master_addr
         os.environ["MASTER_PORT"] = str(master_port)
         os.environ["RANK"] = str(rank)
         os.environ["WORLD_SIZE"] = str(world_size)
+
+        # Runtime check: parallel config vs actual world size
+        diffusion_args.parallel.validate_world_size(world_size)
 
         # Calculate device_id before init_process_group
         device_id = rank % torch.cuda.device_count() if torch.cuda.is_available() else 0
@@ -243,11 +249,12 @@ def run_diffusion_worker(
         )
 
         executor = DiffusionExecutor(
-            model_path=model_path,
             request_queue_addr=request_queue_addr,
             response_queue_addr=response_queue_addr,
             device_id=device_id,
-            diffusion_config=diffusion_config,
+            diffusion_args=diffusion_args,
+            req_hmac_key=req_hmac_key,
+            resp_hmac_key=resp_hmac_key,
         )
         executor.serve_forever()
         if executor.pipeline is not None:

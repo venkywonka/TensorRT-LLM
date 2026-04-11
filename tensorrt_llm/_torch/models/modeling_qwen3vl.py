@@ -17,10 +17,11 @@ from tensorrt_llm._torch.models.modeling_multimodal_utils import _is_disagg
 from tensorrt_llm.functional import PositionEmbeddingType
 from tensorrt_llm.mapping import Mapping
 
-from ..._utils import nvtx_range, nvtx_range_debug
+from ..._utils import nvtx_range, nvtx_range_debug, prefer_pinned
 from ...inputs import (
     BaseMultimodalDummyInputsBuilder,
     BaseMultimodalInputProcessor,
+    ContentFormat,
     ExtraProcessedInputs,
     MultimodalPlaceholderMetadata,
     MultimodalPlaceholderPlacement,
@@ -254,6 +255,26 @@ class Qwen3VLInputProcessorBase(BaseMultimodalInputProcessor, BaseMultimodalDumm
                 )
 
             return position_ids, mrope_position_deltas
+
+    def get_num_tokens_per_video(self, *, video: List, **kwargs) -> int:
+        """Calculate the actual number of video tokens for Qwen3-VL.
+
+        The base class fallback computes num_frames * tokens_per_image / temporal_patch_size,
+        but this doesn't match the HF processor's actual behavior which applies temporal
+        grouping and spatial merging. We run the HF processor on a dummy prompt to get
+        the exact token count, matching what _preprocess will produce at inference time.
+        """
+        dummy_prompt = "<|vision_start|><|video_pad|><|vision_end|>"
+        do_rescale = not isinstance(video[0], torch.Tensor)
+        processed = self.processor(
+            text=[dummy_prompt],
+            videos=[video],
+            padding=True,
+            do_rescale=do_rescale,
+            return_tensors="pt",
+        )
+        video_token_id = self.config.video_token_id
+        return (processed["input_ids"][0] == video_token_id).sum().item()
 
     def _preprocess(
         self, text: Dict[str, Any], mm_data: Dict[str, Any], mm_processor_kwargs: Dict[str, Any]
@@ -716,7 +737,7 @@ class Qwen3VisionModel(torch.nn.Module):
         # NOTE: The single prompt is divided into multiple seq_lens, so pretending have many batch_sizes.
         batch_size = len(seq_lens)
         prompt_lens = seq_lens
-        seq_lens = torch.tensor(seq_lens, dtype=torch.int, pin_memory=True)
+        seq_lens = torch.tensor(seq_lens, dtype=torch.int, pin_memory=prefer_pinned())
         request_ids = list(range(1, batch_size + 1))
 
         attn_metadata.num_contexts = batch_size
@@ -951,6 +972,10 @@ class Qwen3VLModelBase(PreTrainedModel):
         self.model_config.pretrained_config = self.llm.config
         self.config = self.model_config.pretrained_config
 
+    @property
+    def vocab_size_padded(self) -> int:
+        return self.llm.vocab_size_padded
+
     def infer_max_seq_len(self) -> int:
         return self.llm.infer_max_seq_len()
 
@@ -1119,7 +1144,7 @@ class Qwen3VLModelBase(PreTrainedModel):
                 or data.get("video", {}).get("pixel_values_videos") is not None
                 # This condition corresponds to when the embeddings are already populated, as is e.g.
                 # the case in EPD disagg in the prefill worker.
-                or data.get("multimodal_embedding")
+                or data.get("multimodal_embedding") is not None
             ):
                 mm_multimodal_params.append(multimodal_param)
 
@@ -1139,6 +1164,7 @@ class Qwen3VLModelBase(PreTrainedModel):
         },
         placeholder_placement=MultimodalPlaceholderPlacement.BEFORE_TEXT,
         placeholders_separator="",
+        content_format=ContentFormat.STRING,
     ),
 )
 class Qwen3VLModel(Qwen3VLModelBase):

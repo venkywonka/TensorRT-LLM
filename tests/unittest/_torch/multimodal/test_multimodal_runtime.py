@@ -130,6 +130,264 @@ class TestMultimodalRuntimeData:
                                   special_token_offsets=[])
 
 
+class TestNonContiguousMultimodalRuntimeData:
+    """Test cases for MultimodalRuntimeData with non-contiguous MM regions.
+
+    These simulate Qwen3-VL-style layouts where images/video frames are
+    separated by text tokens, creating gaps between MM regions.
+    """
+
+    def test_two_images_separated_by_text_chunk_spans_both(self):
+        """Two images at positions [5,15) and [30,40) with text gap at [15,30).
+        Chunk [0, 50) covers everything."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=0,
+            mm_token_lengths=[10, 10],
+            mm_token_positions=[5, 30],
+            chunk_end_pos=50,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 0
+        assert runtime.num_mm_tokens_in_chunk == 20  # both full regions
+
+    def test_two_images_separated_chunk_in_text_gap(self):
+        """Chunk [15, 30) lands entirely in the text gap between two images.
+        Images at [5,15) and [30,40). No MM tokens in chunk."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=15,
+            mm_token_lengths=[10, 10],
+            mm_token_positions=[5, 30],
+            chunk_end_pos=30,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 10  # first image fully cached
+        assert runtime.num_mm_tokens_in_chunk == 0  # gap has no MM tokens
+
+    def test_two_images_separated_chunk_hits_second_only(self):
+        """Chunk [25, 45) starts in the gap and covers the second image.
+        Images at [5,15) and [30,40)."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=25,
+            mm_token_lengths=[10, 10],
+            mm_token_positions=[5, 30],
+            chunk_end_pos=45,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 10  # first image fully cached
+        assert runtime.num_mm_tokens_in_chunk == 10  # second image fully in chunk
+
+    def test_two_images_separated_chunk_straddles_second(self):
+        """Chunk [25, 35) starts in gap, partially covers second image.
+        Images at [5,15) and [30,40)."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=25,
+            mm_token_lengths=[10, 10],
+            mm_token_positions=[5, 30],
+            chunk_end_pos=35,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 10  # first image fully cached
+        assert runtime.num_mm_tokens_in_chunk == 5  # 5 tokens of second image [30,35)
+
+    def test_three_images_chunk_hits_middle_only(self):
+        """Three images at [5,15), [30,40), [60,70). Chunk [25, 45) hits middle only."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=25,
+            mm_token_lengths=[10, 10, 10],
+            mm_token_positions=[5, 30, 60],
+            chunk_end_pos=45,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 10  # first image cached
+        assert runtime.num_mm_tokens_in_chunk == 10  # second image fully in chunk
+        # third image is beyond chunk
+
+    def test_three_images_chunk_partial_first_full_second_miss_third(self):
+        """Three images at [5,15), [30,40), [60,70). Chunk [10, 45).
+        First image partial (5 tokens cached, 5 in chunk), second full in chunk, third missed."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=10,
+            mm_token_lengths=[10, 10, 10],
+            mm_token_positions=[5, 30, 60],
+            chunk_end_pos=45,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 5  # [5,10) of first image cached
+        assert runtime.num_mm_tokens_in_chunk == 15  # 5 from first + 10 from second
+
+    def test_scattered_video_frames_qwen3vl_style(self):
+        """Simulate Qwen3-VL timestamp-separated frames:
+        text[0,10) frame1[10,30) text[30,35) frame2[35,55) text[55,60) frame3[60,80)
+        Chunk [30, 60) should get: 0 from frame1 (cached), full frame2, 0 from frame3."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=30,
+            mm_token_lengths=[20, 20, 20],
+            mm_token_positions=[10, 35, 60],
+            chunk_end_pos=60,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 20  # frame1 fully cached
+        assert runtime.num_mm_tokens_in_chunk == 20  # frame2 fully in chunk [35,55)
+        # frame3 starts at 60 = chunk_end_pos, so not included
+
+    def test_scattered_frames_chunk_straddles_gap_and_frame(self):
+        """Frames at [10,30) and [50,70). Chunk [25, 55).
+        Partial first frame (5 tokens [25,30)), then gap [30,50), then partial second (5 tokens [50,55))."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=25,
+            mm_token_lengths=[20, 20],
+            mm_token_positions=[10, 50],
+            chunk_end_pos=55,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 15  # [10,25) of first frame cached
+        assert runtime.num_mm_tokens_in_chunk == 10  # 5 from first [25,30) + 5 from second [50,55)
+
+    def test_large_gap_between_images(self):
+        """Images at [5,10) and [500,505) with a huge text gap.
+        Chunk [0, 100). First image fully in chunk, second not reached."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=0,
+            mm_token_lengths=[5, 5],
+            mm_token_positions=[5, 500],
+            chunk_end_pos=100,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 0
+        assert runtime.num_mm_tokens_in_chunk == 5  # only first image
+
+
+class TestNonContiguousWithAllTokenPositions:
+    """Test cases for MultimodalRuntimeData with mm_all_token_positions.
+
+    These simulate the actual bug: a single video entry where MM tokens are
+    scattered across a wider range than pos+length due to text gaps (e.g.,
+    <vision_end> + timestamp + <vision_start> between temporal groups).
+    With mm_all_token_positions, counting is exact (not range-based).
+    """
+
+    @staticmethod
+    def _make_positions(groups):
+        """Helper: create a flat list of MM token positions from temporal groups.
+        groups is a list of (start, count) tuples for each contiguous group."""
+        positions = []
+        for start, count in groups:
+            positions.extend(range(start, start + count))
+        return positions
+
+    def test_video_three_groups_chunk_hits_first_two(self):
+        """Video with 3 temporal groups of 196 MM tokens each:
+        Group1: [10, 206), Gap: [206, 214), Group2: [214, 410), Gap: [410, 418), Group3: [418, 614)
+        Total MM tokens: 588. Chunk [0, 256) should contain 196 + 42 = 238 MM tokens.
+        """
+        all_positions = self._make_positions([(10, 196), (214, 196), (418, 196)])
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=0,
+            mm_token_lengths=[588],
+            mm_token_positions=[10],
+            mm_all_token_positions=all_positions,
+            chunk_end_pos=256,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 0
+        # 196 from group1 [10,206) + 42 from group2 [214,256) = 238
+        assert runtime.num_mm_tokens_in_chunk == 238
+
+    def test_video_three_groups_chunk_in_middle(self):
+        """Same video, chunk [256, 512). past_seen=256."""
+        all_positions = self._make_positions([(10, 196), (214, 196), (418, 196)])
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=256,
+            mm_token_lengths=[588],
+            mm_token_positions=[10],
+            mm_all_token_positions=all_positions,
+            chunk_end_pos=512,
+            special_token_offsets=[])
+
+        # Cached: 196 (group1) + 42 (group2 partial [214,256)) = 238
+        # In chunk: 154 (group2 remainder [256,410)) + 94 (group3 partial [418,512)) = 248
+        assert runtime.num_unseen_mm_tokens == 238
+        assert runtime.num_mm_tokens_in_chunk == 248
+
+    def test_video_three_groups_last_chunk(self):
+        """Same video, chunk [512, 627). past_seen=512."""
+        all_positions = self._make_positions([(10, 196), (214, 196), (418, 196)])
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=512,
+            mm_token_lengths=[588],
+            mm_token_positions=[10],
+            mm_all_token_positions=all_positions,
+            chunk_end_pos=627,
+            special_token_offsets=[])
+
+        # Cached: 196 + 196 + 94 = 486
+        # In chunk: 102 (group3 remainder [512,614))
+        assert runtime.num_unseen_mm_tokens == 486
+        assert runtime.num_mm_tokens_in_chunk == 102
+        # Total: 486 + 102 = 588 ✓
+
+    def test_contiguous_with_all_positions_matches_without(self):
+        """When MM tokens are contiguous, results match the fallback behavior."""
+        all_positions = list(range(10, 110))  # 100 contiguous tokens
+        with_positions = MultimodalRuntimeData(
+            past_seen_token_num=50,
+            mm_token_lengths=[100],
+            mm_token_positions=[10],
+            mm_all_token_positions=all_positions,
+            chunk_end_pos=80,
+            special_token_offsets=[])
+
+        without_positions = MultimodalRuntimeData(
+            past_seen_token_num=50,
+            mm_token_lengths=[100],
+            mm_token_positions=[10],
+            chunk_end_pos=80,
+            special_token_offsets=[])
+
+        assert with_positions.num_unseen_mm_tokens == without_positions.num_unseen_mm_tokens
+        assert with_positions.num_mm_tokens_in_chunk == without_positions.num_mm_tokens_in_chunk
+
+    def test_fallback_without_all_positions(self):
+        """Without mm_all_token_positions, behavior is unchanged (backward compat)."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=0,
+            mm_token_lengths=[588],
+            mm_token_positions=[10],
+            chunk_end_pos=256,
+            special_token_offsets=[])
+
+        # Old behavior: pos+length=598, computed=246 (the bug, but preserved for compat)
+        assert runtime.num_mm_tokens_in_chunk == 246
+
+    def test_all_cached_with_all_positions(self):
+        """All MM tokens cached."""
+        all_positions = self._make_positions([(10, 196), (214, 196)])
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=700,
+            mm_token_lengths=[392],
+            mm_token_positions=[10],
+            mm_all_token_positions=all_positions,
+            chunk_end_pos=800,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 392
+        assert runtime.num_mm_tokens_in_chunk == 0
+
+    def test_chunk_in_text_gap(self):
+        """Chunk falls entirely in a text gap between groups."""
+        all_positions = self._make_positions([(10, 50), (200, 50)])
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=60,
+            mm_token_lengths=[100],
+            mm_token_positions=[10],
+            mm_all_token_positions=all_positions,
+            chunk_end_pos=200,
+            special_token_offsets=[])
+
+        assert runtime.num_unseen_mm_tokens == 50  # group1 fully cached
+        assert runtime.num_mm_tokens_in_chunk == 0  # gap has no MM tokens
+
+
 class TestFindInputMmEmbed:
     """Focused test cases for find_input_mm_embeds function - testing both KV cache reuse and chunked prefill."""
 
@@ -380,6 +638,55 @@ class TestFindInputMmEmbed:
         multimodal_params = [self.create_multimodal_params(3, 7, [10])]
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
         assert result[0].device == mm_embeds[0].device
+
+    def test_noncontiguous_two_requests_batched_chunk_in_gap(self):
+        """
+        Non-contiguous: two requests in a batch, where one request's chunk
+        falls entirely in a text gap between MM regions.
+        Request 1: 10 MM tokens, 5 cached, 5 in chunk.
+        Request 2: 20 MM tokens (two regions of 10 each), but chunk is in the
+                   text gap — 10 cached, 0 in chunk.
+        Pre-concatenated: 10 + 20 = 30 tokens.
+        """
+        mm_embeds = [torch.randn(30, 512)]
+        multimodal_params = [
+            self.create_multimodal_params(5, 5, [10]),   # 5 cached, 5 in chunk
+            self.create_multimodal_params(10, 0, [10, 10]),  # 10 cached, 0 in chunk (gap)
+        ]
+
+        result = find_input_mm_embeds(mm_embeds, multimodal_params)
+
+        # Only request 1 contributes: [5:10] = 5 tokens
+        # Request 2 contributes nothing (0 in chunk)
+        assert len(result) == 1
+        assert result[0].shape == (5, 512)
+        torch.testing.assert_close(result[0], mm_embeds[0][5:10])
+
+    def test_noncontiguous_individual_batching_mixed_gaps(self):
+        """
+        Non-contiguous: individual batching mode, three requests with
+        different non-contiguous patterns.
+        """
+        mm_embeds = [
+            torch.randn(20, 512),  # Request 1: 20 tokens (two regions of 10)
+            torch.randn(15, 512),  # Request 2: 15 tokens (one region)
+            torch.randn(20, 512),  # Request 3: 20 tokens (two regions of 10)
+        ]
+        multimodal_params = [
+            self.create_multimodal_params(10, 10, [10, 10]),  # 10 cached (first region), 10 in chunk (second region)
+            self.create_multimodal_params(0, 15, [15]),       # nothing cached, all in chunk
+            self.create_multimodal_params(20, 0, [10, 10]),   # all cached, nothing in chunk
+        ]
+
+        result = find_input_mm_embeds(mm_embeds, multimodal_params)
+
+        assert len(result) == 3
+        assert result[0].shape == (10, 512)  # second region of request 1
+        assert result[1].shape == (15, 512)  # all of request 2
+        assert result[2].shape == (0, 512)   # nothing from request 3
+
+        torch.testing.assert_close(result[0], mm_embeds[0][10:20])
+        torch.testing.assert_close(result[1], mm_embeds[1][0:15])
 
     def test_special_tokens_in_batched_mode(self):
         """Test special token handling in batched mode."""

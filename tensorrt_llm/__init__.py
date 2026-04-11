@@ -132,6 +132,8 @@ from .parameter import Parameter
 from .python_plugin import PluginBase
 from .sampling_params import SamplingParams
 from .version import __version__
+from .visual_gen import (VisualGen, VisualGenArgs, VisualGenError,
+                         VisualGenParams, VisualGenResult)
 
 __all__ = [
     'AutoConfig',
@@ -179,9 +181,14 @@ __all__ = [
     'TorchLlmArgs',
     'TrtLlmArgs',
     'SamplingParams',
+    'VisualGenArgs',
+    'VisualGenError',
+    'VisualGenResult',
     'DisaggregatedParams',
     'KvCacheConfig',
     'math_utils',
+    'VisualGen',
+    'VisualGenParams',
     '__version__',
 ]
 
