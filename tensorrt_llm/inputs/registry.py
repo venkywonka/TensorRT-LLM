@@ -846,7 +846,7 @@ def create_input_processor_with_hash(
             raise ValueError(
                 "Cannot locate vocab_size or mm_token_ids for multimodal token preprocessing"
             )
-        start_positions, start_special_token_positions, end_positions, all_mm_positions = find_mm_token_positions(
+        start_positions, start_special_token_positions, _end_positions, all_mm_positions = find_mm_token_positions(
             input_ids=prompt_token_ids,  # token sequence
             num_mm_tokens=
             num_mm_tokens,  # list of lengths of each chunk of visual tokens
@@ -869,7 +869,6 @@ def create_input_processor_with_hash(
         extra_processed_inputs[
             "multimodal_input"] = MultimodalInput.from_components(
                 mm_hashes_int32, start_positions, num_mm_tokens, mm_uuid_list,
-                mm_end_positions=end_positions,
                 mm_all_token_positions=all_mm_positions)
         # Store all_mm_positions in multimodal_data for threading through
         # the C++ executor boundary (MultimodalInput C++ binding doesn't have this field).

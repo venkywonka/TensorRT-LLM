@@ -48,18 +48,6 @@ class MultimodalInput:
     by text tokens). If None, falls back to range-based counting.
     """
 
-    multimodal_end_positions: Optional[List[int]] = None
-    """End positions (exclusive) of each multimodal token chunk in the token sequence.
-
-    end_positions[i] is the position after the last MM token in chunk i.
-    When MM tokens are contiguous, this equals multimodal_positions[i] + multimodal_lengths[i].
-    When text tokens are interleaved (e.g., video frame separators), the actual span is wider
-    and end_positions[i] > multimodal_positions[i] + multimodal_lengths[i].
-
-    This field is needed for correct chunked prefill computation when MM tokens are non-contiguous.
-    If None, falls back to using multimodal_positions[i] + multimodal_lengths[i] as the end.
-    """
-
     multimodal_uuids: Optional[List[Optional[str]]] = None
     """Optional user-provided UUIDs for multimodal data items.
 
@@ -128,14 +116,12 @@ class MultimodalInput:
             mm_positions: List[int],
             mm_lengths: List[int],
             mm_uuids: Optional[List[Optional[str]]] = None,
-            mm_end_positions: Optional[List[int]] = None,
             mm_all_token_positions: Optional[List[int]] = None,
     ) -> 'MultimodalInput':
         return cls(multimodal_hashes=mm_hashes,
                    multimodal_positions=mm_positions,
                    multimodal_lengths=mm_lengths,
                    multimodal_all_token_positions=mm_all_token_positions,
-                   multimodal_end_positions=mm_end_positions,
                    multimodal_uuids=mm_uuids)
 
     def to_tensor(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -174,7 +160,6 @@ class MultimodalRuntimeData:
     mm_token_positions: List[int]
     chunk_end_pos: int
     special_token_offsets: List[int]
-    mm_token_end_positions: Optional[List[int]] = None
     mm_all_token_positions: Optional[List[int]] = None
 
     num_unseen_mm_tokens: Optional[int] = None
@@ -831,7 +816,7 @@ def find_mm_token_positions(
     vocab_size: Optional[int] = None,
     mm_token_ids: Optional[torch.Tensor] = None,
     mm_special_token_ids: Optional[torch.Tensor] = None
-) -> Tuple[List[int], List[int], List[int]]:
+) -> Tuple[List[int], List[int], List[int], List[int]]:
     """Get starting and ending positions of multimodal token chunks using known lengths.
 
     This function finds multimodal tokens (with IDs > vocab_size or matching mm_token_ids)
