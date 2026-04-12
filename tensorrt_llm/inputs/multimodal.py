@@ -1,5 +1,6 @@
 """Multimodal utilities for handling images and other media types in TensorRT-LLM."""
 
+import bisect
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -197,19 +198,18 @@ class MultimodalRuntimeData:
             )
 
         if self.num_unseen_mm_tokens is None or self.num_mm_tokens_in_chunk is None:
-            # When mm_all_token_positions is available, use exact position-based counting.
+            # When mm_all_token_positions is available, use exact position-based counting
+            # via binary search (positions are sorted ascending from token sequence order).
             # This correctly handles non-contiguous MM tokens (e.g., video frames
             # separated by text tokens like timestamps or frame separators).
             if self.mm_all_token_positions is not None:
-                self.num_unseen_mm_tokens = sum(
-                    1 for p in self.mm_all_token_positions
-                    if p < self.past_seen_token_num)
-                self.num_mm_tokens_in_chunk = sum(
-                    1 for p in self.mm_all_token_positions
-                    if self.past_seen_token_num <= p < self.chunk_end_pos)
-                remainder = sum(
-                    1 for p in self.mm_all_token_positions
-                    if p >= self.chunk_end_pos)
+                p = self.mm_all_token_positions
+                self.num_unseen_mm_tokens = bisect.bisect_left(
+                    p, self.past_seen_token_num)
+                chunk_end_idx = bisect.bisect_left(p, self.chunk_end_pos)
+                self.num_mm_tokens_in_chunk = (chunk_end_idx -
+                                               self.num_unseen_mm_tokens)
+                remainder = len(p) - chunk_end_idx
             else:
                 # Fallback: range-based computation using pos + length.
                 # This is correct when MM tokens within each chunk are contiguous,
@@ -239,13 +239,14 @@ class MultimodalRuntimeData:
                             self.num_mm_tokens_in_chunk += length
 
         if len(self.special_token_offsets) > 0:
-            self.num_unseen_special_tokens = sum(
-                1 for offset in self.special_token_offsets
-                if offset < self.num_unseen_mm_tokens)
+            # special_token_offsets are sorted indices into the mm token union
+            s = self.special_token_offsets
+            self.num_unseen_special_tokens = bisect.bisect_left(
+                s, self.num_unseen_mm_tokens)
             mm_tokens_end_pos = self.num_unseen_mm_tokens + self.num_mm_tokens_in_chunk
-            self.num_special_tokens_in_chunk = sum(
-                1 for offset in self.special_token_offsets
-                if self.num_unseen_mm_tokens <= offset < mm_tokens_end_pos)
+            self.num_special_tokens_in_chunk = (
+                bisect.bisect_left(s, mm_tokens_end_pos) -
+                self.num_unseen_special_tokens)
 
             self.total_special_tokens_in_request = len(
                 self.special_token_offsets)
