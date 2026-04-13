@@ -7,7 +7,8 @@ import torch
 from tensorrt_llm._torch.models.modeling_multimodal_utils import (
     find_input_mm_embeds, get_multimodal_embeddings)
 from tensorrt_llm.inputs.multimodal import (MultimodalParams,
-                                            MultimodalRuntimeData)
+                                            MultimodalRuntimeData,
+                                            find_mm_token_positions)
 
 
 class TestMultimodalRuntimeData:
@@ -1138,6 +1139,148 @@ class TestGetMultimodalEmbeddings:
             cached_emb)
         assert multimodal_params[1].multimodal_data[
             "multimodal_embedding"].shape == (9, 512)
+
+
+class TestFindMmTokenPositions:
+    """Test cases for find_mm_token_positions — verifies 3-tuple return,
+    early return on empty input, and special token detection."""
+
+    def test_early_return_no_mm_tokens(self):
+        """When input has no MM tokens, should return three empty lists."""
+        input_ids = torch.tensor([1, 2, 3, 4, 5])
+        result = find_mm_token_positions(
+            input_ids=input_ids,
+            num_mm_tokens=[],
+            vocab_size=100,
+        )
+        assert result == ([], [], [])
+
+    def test_early_return_no_match(self):
+        """When mm_token_ids don't match anything in input_ids."""
+        input_ids = torch.tensor([1, 2, 3, 4, 5])
+        result = find_mm_token_positions(
+            input_ids=input_ids,
+            num_mm_tokens=[2],
+            mm_token_ids=torch.tensor([99]),
+        )
+        assert result == ([], [], [])
+
+    def test_basic_contiguous_tokens(self):
+        """Basic case: contiguous MM tokens identified by out-of-vocab IDs."""
+        # vocab_size=10, tokens >= 10 are MM tokens
+        input_ids = torch.tensor([1, 2, 10, 11, 12, 3, 4, 10, 11, 5])
+        start_pos, special_pos, all_pos = find_mm_token_positions(
+            input_ids=input_ids,
+            num_mm_tokens=[3, 2],
+            vocab_size=10,
+        )
+        assert start_pos == [2, 7]
+        assert special_pos == []
+        assert all_pos == [2, 3, 4, 7, 8]
+
+    def test_with_mm_token_ids(self):
+        """MM tokens identified by explicit token IDs."""
+        input_ids = torch.tensor([1, 5, 5, 5, 2, 3, 5, 5, 4])
+        start_pos, special_pos, all_pos = find_mm_token_positions(
+            input_ids=input_ids,
+            num_mm_tokens=[3, 2],
+            mm_token_ids=torch.tensor([5]),
+        )
+        assert start_pos == [1, 6]
+        assert all_pos == [1, 2, 3, 6, 7]
+
+    def test_with_special_tokens(self):
+        """Special tokens (e.g., image_break, image_end) detected within MM region."""
+        # Token 5 = MM placeholder, Token 6 = image_break (special), Token 7 = image_end (special)
+        input_ids = torch.tensor([1, 5, 5, 6, 5, 7, 2])
+        start_pos, special_pos, all_pos = find_mm_token_positions(
+            input_ids=input_ids,
+            num_mm_tokens=[5],
+            mm_token_ids=torch.tensor([5]),
+            mm_special_token_ids=torch.tensor([6, 7]),
+        )
+        assert start_pos == [1]
+        # special_pos are indices into the flat mm token list where specials occur
+        # all_pos = [1, 2, 3, 4, 5], tokens at positions 3 and 5 are special (6, 7)
+        # In the flat mm list: index 2 (pos 3) and index 4 (pos 5) are special
+        assert special_pos == [2, 4]
+        assert all_pos == [1, 2, 3, 4, 5]
+
+    def test_non_contiguous_tokens(self):
+        """MM tokens scattered with text gaps between them."""
+        # Two groups of MM tokens separated by text
+        input_ids = torch.tensor([1, 100, 100, 2, 3, 100, 100, 100, 4])
+        start_pos, special_pos, all_pos = find_mm_token_positions(
+            input_ids=input_ids,
+            num_mm_tokens=[5],  # Single item spanning non-contiguous positions
+            vocab_size=10,
+        )
+        assert start_pos == [1]
+        assert all_pos == [1, 2, 5, 6, 7]
+
+    def test_raises_without_vocab_size_or_mm_token_ids(self):
+        """Should raise ValueError when neither vocab_size nor mm_token_ids provided."""
+        with pytest.raises(ValueError,
+                           match="Provide either mm_token_ids or vocab_size"):
+            find_mm_token_positions(
+                input_ids=torch.tensor([1, 2, 3]),
+                num_mm_tokens=[1],
+            )
+
+
+class TestMultimodalRuntimeDataPreset:
+    """Test MultimodalRuntimeData when num_unseen_mm_tokens and
+    num_mm_tokens_in_chunk are pre-set (skipping the computation block).
+    This covers the remainder NameError path we fixed."""
+
+    def test_preset_counts_skip_computation(self):
+        """When both num_unseen and num_in_chunk are pre-set, __post_init__
+        should skip the counting block and not raise NameError on remainder."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=10,
+            mm_token_lengths=[5, 5],
+            mm_token_positions=[0, 5],
+            chunk_end_pos=20,
+            special_token_offsets=[],
+            num_unseen_mm_tokens=5,
+            num_mm_tokens_in_chunk=5,
+        )
+        # Pre-set values should be preserved
+        assert runtime.num_unseen_mm_tokens == 5
+        assert runtime.num_mm_tokens_in_chunk == 5
+        assert runtime.total_mm_tokens_in_request == 10
+
+    def test_preset_counts_with_special_tokens(self):
+        """Pre-set counts should still allow special token computation."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=10,
+            mm_token_lengths=[8, 8],
+            mm_token_positions=[0, 10],
+            chunk_end_pos=20,
+            special_token_offsets=[1, 5, 9, 13],
+            num_unseen_mm_tokens=8,
+            num_mm_tokens_in_chunk=8,
+        )
+        assert runtime.num_unseen_mm_tokens == 8
+        assert runtime.num_mm_tokens_in_chunk == 8
+        # Special tokens at offsets [1, 5] are < 8 (unseen), [9, 13] are in [8, 16)
+        assert runtime.num_unseen_special_tokens == 2
+        assert runtime.num_special_tokens_in_chunk == 2
+
+    def test_preset_only_unseen_still_computes_chunk(self):
+        """When only num_unseen is pre-set but num_in_chunk is None,
+        should still run computation (the 'or' condition)."""
+        runtime = MultimodalRuntimeData(
+            past_seen_token_num=5,
+            mm_token_lengths=[10],
+            mm_token_positions=[0],
+            chunk_end_pos=8,
+            special_token_offsets=[],
+            num_unseen_mm_tokens=5,
+            # num_mm_tokens_in_chunk=None triggers computation
+        )
+        # Should compute num_mm_tokens_in_chunk via fallback path
+        assert runtime.num_mm_tokens_in_chunk == 3  # positions 5..8
 
 
 if __name__ == "__main__":

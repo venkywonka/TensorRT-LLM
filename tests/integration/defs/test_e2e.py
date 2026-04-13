@@ -2128,6 +2128,11 @@ def test_ptp_quickstart_multimodal_kv_cache_reuse(llm_root, llm_venv,
             "Qwen3/Qwen3-VL-8B-Instruct",
             0.6,
             marks=pytest.mark.skip_less_device_memory(40000)),
+        pytest.param(
+            "nemotron-nano-12b-v2-vl",
+            "NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
+            0.6,
+            marks=pytest.mark.skip_less_device_memory(40000)),
     ])
 def test_ptp_quickstart_multimodal_chunked_prefill(llm_root, llm_venv,
                                                    model_name, model_path,
@@ -2139,7 +2144,9 @@ def test_ptp_quickstart_multimodal_chunked_prefill(llm_root, llm_venv,
     test_data_root = Path(
         os.path.join(llm_models_root(), "multimodals", "test_data"))
     print(f"Accuracy test {model_name} {modality} mode with example inputs.")
-    if modality == "video" and model_name in {"mistral-small-3.1-24b-instruct"}:
+    if modality == "video" and model_name in {
+            "mistral-small-3.1-24b-instruct"
+    }:
         pytest.skip(f"Skipping video modality test for {model_name}")
     accuracy_inputs = {
         "image": {
@@ -2188,6 +2195,17 @@ def test_ptp_quickstart_multimodal_chunked_prefill(llm_root, llm_venv,
             ],
             "video": [
                 ["street", "walk", "night", "neon", "city", "woman"],
+                ["globe", "earth", "world", "map", "spin"],
+            ],
+        },
+        "nemotron-nano-12b-v2-vl": {
+            "image": [
+                ["ocean", "sea", "water", "cloud", "wave"],
+                ["bench", "dog", "park", "building", "tree"],
+                ["traffic", "road", "car", "sign", "street"],
+            ],
+            "video": [
+                ["street", "walk", "night", "city", "woman"],
                 ["globe", "earth", "world", "map", "spin"],
             ],
         },

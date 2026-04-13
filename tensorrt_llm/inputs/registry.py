@@ -846,7 +846,7 @@ def create_input_processor_with_hash(
             raise ValueError(
                 "Cannot locate vocab_size or mm_token_ids for multimodal token preprocessing"
             )
-        start_positions, start_special_token_positions, _end_positions, all_mm_positions = find_mm_token_positions(
+        start_positions, start_special_token_positions, all_mm_positions = find_mm_token_positions(
             input_ids=prompt_token_ids,  # token sequence
             num_mm_tokens=
             num_mm_tokens,  # list of lengths of each chunk of visual tokens
