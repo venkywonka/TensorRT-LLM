@@ -868,10 +868,8 @@ def create_input_processor_with_hash(
 
         extra_processed_inputs[
             "multimodal_input"] = MultimodalInput.from_components(
-                mm_hashes_int32, start_positions, num_mm_tokens, mm_uuid_list,
-                mm_contiguous_spans=contiguous_spans)
-        # Store spans in multimodal_data for threading through the C++ executor
-        # boundary (the C++ MultimodalInput binding doesn't have this field).
+                mm_hashes_int32, start_positions, num_mm_tokens, mm_uuid_list)
+        # Store spans in multimodal_data for use by MultimodalRuntimeData
         extra_processed_inputs["multimodal_data"][
             "mm_contiguous_spans"] = contiguous_spans
         return prompt_token_ids, extra_processed_inputs

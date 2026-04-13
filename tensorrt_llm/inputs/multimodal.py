@@ -40,14 +40,6 @@ class MultimodalInput:
     (e.g., image_end_token, image_break_token for mistral3) mixed with the actual multimodal tokens.
     """
 
-    multimodal_contiguous_spans: Optional[List[Tuple[int, int]]] = None
-    """List of (start_position, token_count) for each contiguous run of MM tokens.
-
-    Used by MultimodalRuntimeData for exact counting during chunked prefill
-    when MM tokens are non-contiguous (e.g., video frames separated by text
-    tokens). Each tuple represents a contiguous block of MM tokens.
-    """
-
     multimodal_uuids: Optional[List[Optional[str]]] = None
     """Optional user-provided UUIDs for multimodal data items.
 
@@ -116,12 +108,10 @@ class MultimodalInput:
             mm_positions: List[int],
             mm_lengths: List[int],
             mm_uuids: Optional[List[Optional[str]]] = None,
-            mm_contiguous_spans: Optional[List[Tuple[int, int]]] = None,
     ) -> 'MultimodalInput':
         return cls(multimodal_hashes=mm_hashes,
                    multimodal_positions=mm_positions,
                    multimodal_lengths=mm_lengths,
-                   multimodal_contiguous_spans=mm_contiguous_spans,
                    multimodal_uuids=mm_uuids)
 
     def to_tensor(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

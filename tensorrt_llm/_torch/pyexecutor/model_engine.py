@@ -2306,10 +2306,6 @@ class PyTorchModelEngine(ModelEngine):
             # Multimodal
             mm_spans = request.py_multimodal_data.get(
                 'mm_contiguous_spans') if request.py_multimodal_data else None
-            if mm_spans is None and request.multimodal_positions is not None:
-                mm_spans = list(
-                    zip(request.multimodal_positions,
-                        request.multimodal_lengths))
             py_multimodal_runtime = MultimodalRuntimeData(
                 mm_contiguous_spans=mm_spans,
                 past_seen_token_num=past_seen_token_num,
