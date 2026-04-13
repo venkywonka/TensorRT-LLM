@@ -630,7 +630,6 @@ class LlmRequest(tensorrt_llm.bindings.internal.batch_manager.LlmRequest):
         self.py_lora_path: str | None = kwargs.pop("py_lora_path", None)
         # Multimodal data
         self.py_multimodal_data = kwargs.pop("py_multimodal_data", None)
-        self.py_multimodal_all_token_positions = kwargs.pop("multimodal_all_token_positions", None)
         if llm_request is not None:
             super().__init__(llm_request)
         else:
@@ -942,16 +941,12 @@ def executor_request_to_llm_request(
     multimodal_hashes = None
     multimodal_positions = None
     multimodal_lengths = None
-    multimodal_all_token_positions = None
     multimodal_uuids = None
     if executor_request.multimodal_input is not None:
         multimodal_hashes = executor_request.multimodal_input.multimodal_hashes
         multimodal_positions = executor_request.multimodal_input.multimodal_positions
         multimodal_lengths = executor_request.multimodal_input.multimodal_lengths
         multimodal_uuids = executor_request.multimodal_input.multimodal_uuids
-        # These are Python-only fields not present in C++ MultimodalInput binding
-        multimodal_all_token_positions = getattr(
-            executor_request.multimodal_input, 'multimodal_all_token_positions', None)
 
     # Extract mrope fields
     mrope_rotary_cos_sin = None
@@ -981,7 +976,6 @@ def executor_request_to_llm_request(
         multimodal_hashes=multimodal_hashes,
         multimodal_positions=multimodal_positions,
         multimodal_lengths=multimodal_lengths,
-        multimodal_all_token_positions=multimodal_all_token_positions,
         multimodal_uuids=multimodal_uuids,
         multimodal_embedding=executor_request.multimodal_embedding,
         lora_task_id=executor_request.lora_config.task_id

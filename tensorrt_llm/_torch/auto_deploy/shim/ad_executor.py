@@ -650,8 +650,7 @@ class ADEngine(ModelEngine):
 
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,
-                mm_token_positions=list(mm_pos),
-                mm_token_lengths=list(mm_len),
+                mm_contiguous_spans=list(zip(mm_pos, mm_len)),
                 chunk_end_pos=end_compute,
                 special_token_offsets=list(special_offsets),
             )

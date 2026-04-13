@@ -2304,17 +2304,14 @@ class PyTorchModelEngine(ModelEngine):
             request.cached_tokens = num_cached_tokens_per_seq[-1]
 
             # Multimodal
-            # mm_all_token_positions may come from either the request attribute
-            # (threaded through llm_request) or py_multimodal_data dict (threaded
-            # through the C++ executor boundary via the multimodal data dict).
-            mm_all_token_pos = getattr(request, 'py_multimodal_all_token_positions', None)
-            if mm_all_token_pos is None and request.py_multimodal_data is not None:
-                mm_all_token_pos = request.py_multimodal_data.get(
-                    'mm_all_token_positions', None)
+            mm_spans = request.py_multimodal_data.get(
+                'mm_contiguous_spans') if request.py_multimodal_data else None
+            if mm_spans is None and request.multimodal_positions is not None:
+                mm_spans = list(
+                    zip(request.multimodal_positions,
+                        request.multimodal_lengths))
             py_multimodal_runtime = MultimodalRuntimeData(
-                mm_token_lengths=request.multimodal_lengths,
-                mm_token_positions=request.multimodal_positions,
-                mm_all_token_positions=mm_all_token_pos,
+                mm_contiguous_spans=mm_spans,
                 past_seen_token_num=past_seen_token_num,
                 chunk_end_pos=end_compute,
                 special_token_offsets=request.py_multimodal_data.get(

@@ -40,13 +40,12 @@ class MultimodalInput:
     (e.g., image_end_token, image_break_token for mistral3) mixed with the actual multimodal tokens.
     """
 
-    multimodal_all_token_positions: Optional[List[int]] = None
-    """Flat list of all individual MM token positions in the token sequence.
+    multimodal_contiguous_spans: Optional[List[Tuple[int, int]]] = None
+    """List of (start_position, token_count) for each contiguous run of MM tokens.
 
-    Contains every position where an MM token exists, in order. Used by
-    MultimodalRuntimeData for exact position-based counting during chunked
-    prefill when MM tokens are non-contiguous (e.g., video frames separated
-    by text tokens). If None, falls back to range-based counting.
+    Used by MultimodalRuntimeData for exact counting during chunked prefill
+    when MM tokens are non-contiguous (e.g., video frames separated by text
+    tokens). Each tuple represents a contiguous block of MM tokens.
     """
 
     multimodal_uuids: Optional[List[Optional[str]]] = None
@@ -117,12 +116,12 @@ class MultimodalInput:
             mm_positions: List[int],
             mm_lengths: List[int],
             mm_uuids: Optional[List[Optional[str]]] = None,
-            mm_all_token_positions: Optional[List[int]] = None,
+            mm_contiguous_spans: Optional[List[Tuple[int, int]]] = None,
     ) -> 'MultimodalInput':
         return cls(multimodal_hashes=mm_hashes,
                    multimodal_positions=mm_positions,
                    multimodal_lengths=mm_lengths,
-                   multimodal_all_token_positions=mm_all_token_positions,
+                   multimodal_contiguous_spans=mm_contiguous_spans,
                    multimodal_uuids=mm_uuids)
 
     def to_tensor(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -144,14 +143,14 @@ class MultimodalRuntimeData:
     Attributes:
         past_seen_token_num: Total number of tokens already processed in previous
             iterations (KV cache reuse or prior chunks).
-        mm_token_lengths: Length of each multimodal token chunk.
-        mm_token_positions: Starting positions of each multimodal token chunk.
+        mm_contiguous_spans: List of (start_position, token_count) tuples for each
+            contiguous run of MM tokens. Handles both contiguous tokens (one span per
+            item) and non-contiguous tokens (multiple spans per item, e.g., video
+            frames separated by text tokens).
         chunk_end_pos: End position (exclusive) of the current chunk for chunked prefill.
         special_token_offsets: Sorted indices of special tokens (e.g., image_start,
             image_end) within the flat union of all MM token positions. These tokens
             occupy MM positions but get text embeddings, not encoder embeddings.
-        mm_all_token_positions: Optional flat sorted list of every individual MM token
-            position. Enables O(log N) bisect-based counting for non-contiguous tokens.
 
         num_unseen_mm_tokens: Number of MM tokens already processed in prior chunks,
             used as a skip offset when slicing encoder embeddings (computed).
@@ -163,11 +162,9 @@ class MultimodalRuntimeData:
         total_special_tokens_in_request: Total special tokens in the request (computed).
     """
     past_seen_token_num: int
-    mm_token_lengths: List[int]
-    mm_token_positions: List[int]
+    mm_contiguous_spans: List[Tuple[int, int]]
     chunk_end_pos: int
     special_token_offsets: List[int]
-    mm_all_token_positions: Optional[List[int]] = None
 
     num_unseen_mm_tokens: Optional[int] = None
     num_mm_tokens_in_chunk: Optional[int] = None
@@ -177,72 +174,46 @@ class MultimodalRuntimeData:
     num_special_tokens_in_chunk: Optional[int] = 0
     total_special_tokens_in_request: Optional[int] = 0
 
-    # TODO: fine-grained control of encoder runner/cache to each mm_item
-
     def __post_init__(self):
-        # Validate input data
         if self.total_mm_tokens_in_request is None:
-            self.total_mm_tokens_in_request = sum(self.mm_token_lengths)
-        if len(self.mm_token_positions) != len(self.mm_token_lengths):
-            raise ValueError(
-                f"mm_token_positions ({len(self.mm_token_positions)}) and mm_token_lengths ({len(self.mm_token_lengths)}) must have the same length"
-            )
+            self.total_mm_tokens_in_request = sum(
+                length for _, length in self.mm_contiguous_spans)
 
         if self.past_seen_token_num < 0:
             raise ValueError(
                 f"past_seen_token_num must be non-negative, got {self.past_seen_token_num}"
             )
 
-        if any(length <= 0 for length in self.mm_token_lengths):
+        if any(length <= 0 for _, length in self.mm_contiguous_spans):
             raise ValueError(
-                f"All mm_token_lengths must be positive, got {self.mm_token_lengths}"
+                f"All span lengths must be positive, got {self.mm_contiguous_spans}"
             )
 
-        if any(pos < 0 for pos in self.mm_token_positions):
+        if any(pos < 0 for pos, _ in self.mm_contiguous_spans):
             raise ValueError(
-                f"All mm_token_positions must be non-negative, got {self.mm_token_positions}"
+                f"All span positions must be non-negative, got {self.mm_contiguous_spans}"
             )
 
         remainder = 0
         if self.num_unseen_mm_tokens is None or self.num_mm_tokens_in_chunk is None:
-            # When mm_all_token_positions is available, use exact position-based counting
-            # via binary search (positions are sorted ascending from token sequence order).
-            # This correctly handles non-contiguous MM tokens (e.g., video frames
-            # separated by text tokens like timestamps or frame separators).
-            if self.mm_all_token_positions is not None:
-                p = self.mm_all_token_positions
-                self.num_unseen_mm_tokens = bisect.bisect_left(
-                    p, self.past_seen_token_num)
-                chunk_end_idx = bisect.bisect_left(p, self.chunk_end_pos)
-                self.num_mm_tokens_in_chunk = (chunk_end_idx -
-                                               self.num_unseen_mm_tokens)
-                remainder = len(p) - chunk_end_idx
-            else:
-                # Fallback: range-based computation using pos + length.
-                # This is correct when MM tokens within each chunk are contiguous,
-                # but may overcount when text gaps exist within a chunk.
-                self.num_unseen_mm_tokens = 0
-                self.num_mm_tokens_in_chunk = 0
-                for pos, length in zip(self.mm_token_positions,
-                                       self.mm_token_lengths):
-                    if pos + length <= self.past_seen_token_num:
-                        self.num_unseen_mm_tokens += length
-                    elif pos < self.past_seen_token_num:
-                        # Partial overlap - only count the cached portion
-                        self.num_unseen_mm_tokens += self.past_seen_token_num - pos
-                        self.num_mm_tokens_in_chunk += min(
-                            self.chunk_end_pos,
-                            pos + length) - self.past_seen_token_num
-                    else:
-                        if pos + length > self.chunk_end_pos:
-                            # Partial overlap - only count the cached portion
-                            if pos < self.chunk_end_pos:
-                                self.num_mm_tokens_in_chunk += self.chunk_end_pos - pos
-                            else:
-                                remainder += length
+            self.num_unseen_mm_tokens = 0
+            self.num_mm_tokens_in_chunk = 0
+            for pos, length in self.mm_contiguous_spans:
+                span_end = pos + length
+                if span_end <= self.past_seen_token_num:
+                    self.num_unseen_mm_tokens += length
+                elif pos < self.past_seen_token_num:
+                    self.num_unseen_mm_tokens += self.past_seen_token_num - pos
+                    self.num_mm_tokens_in_chunk += min(
+                        self.chunk_end_pos, span_end) - self.past_seen_token_num
+                else:
+                    if span_end > self.chunk_end_pos:
+                        if pos < self.chunk_end_pos:
+                            self.num_mm_tokens_in_chunk += self.chunk_end_pos - pos
                         else:
-                            # Full overlap - count the entire mm item chunk
-                            self.num_mm_tokens_in_chunk += length
+                            remainder += length
+                    else:
+                        self.num_mm_tokens_in_chunk += length
 
         if len(self.special_token_offsets) > 0:
             # special_token_offsets are sorted indices into the mm token union
@@ -257,10 +228,12 @@ class MultimodalRuntimeData:
             self.total_special_tokens_in_request = len(
                 self.special_token_offsets)
 
-        if self.num_unseen_mm_tokens + self.num_mm_tokens_in_chunk + remainder > sum(
-                self.mm_token_lengths):
+        total = sum(length for _, length in self.mm_contiguous_spans)
+        if self.num_unseen_mm_tokens + self.num_mm_tokens_in_chunk + remainder > total:
             raise ValueError(
-                f"num_unseen_mm_tokens ({self.num_unseen_mm_tokens}) + num_mm_tokens_in_chunk ({self.num_mm_tokens_in_chunk}) + remainder ({remainder}) must be less than or equal to sum of mm_token_lengths ({sum(self.mm_token_lengths)})"
+                f"num_unseen_mm_tokens ({self.num_unseen_mm_tokens}) + "
+                f"num_mm_tokens_in_chunk ({self.num_mm_tokens_in_chunk}) + "
+                f"remainder ({remainder}) must be <= total ({total})"
             )
 
 
@@ -837,7 +810,7 @@ def find_mm_token_positions(
     vocab_size: Optional[int] = None,
     mm_token_ids: Optional[torch.Tensor] = None,
     mm_special_token_ids: Optional[torch.Tensor] = None
-) -> Tuple[List[int], List[int], List[int]]:
+) -> Tuple[List[int], List[int], List[Tuple[int, int]]]:
     """Get positions of multimodal token chunks using known lengths.
 
     Finds multimodal tokens (with IDs > vocab_size or matching mm_token_ids)
@@ -860,9 +833,9 @@ def find_mm_token_positions(
         - start_positions: List of starting positions for each multimodal token chunk.
         - start_special_token_positions: List of positions of special tokens
             in the union of all chunks (indices into the flat mm token list).
-        - all_mm_positions: Flat sorted list of every MM token position in the token
-            sequence. Used by MultimodalRuntimeData for exact position-based counting
-            during chunked prefill with non-contiguous MM tokens.
+        - contiguous_spans: List of (start, length) tuples for each contiguous run
+            of MM tokens. Used by MultimodalRuntimeData for exact counting during
+            chunked prefill, especially when MM tokens are non-contiguous.
     """
     if mm_token_ids is None and vocab_size is None:
         raise ValueError(
@@ -928,7 +901,21 @@ def find_mm_token_positions(
         start_special_token_positions = torch.where(
             special_token_mask_in_mm)[0].tolist()
 
-    return start_positions, start_special_token_positions, mm_positions
+    # Compress flat mm_positions into contiguous spans: (start, length)
+    contiguous_spans: List[Tuple[int, int]] = []
+    if mm_positions:
+        span_start = mm_positions[0]
+        span_len = 1
+        for i in range(1, len(mm_positions)):
+            if mm_positions[i] == mm_positions[i - 1] + 1:
+                span_len += 1
+            else:
+                contiguous_spans.append((span_start, span_len))
+                span_start = mm_positions[i]
+                span_len = 1
+        contiguous_spans.append((span_start, span_len))
+
+    return start_positions, start_special_token_positions, contiguous_spans
 
 
 def validate_mm_inputs(prompt_token_ids: Union[torch.Tensor, List[int],
