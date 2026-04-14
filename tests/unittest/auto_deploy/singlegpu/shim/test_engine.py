@@ -277,7 +277,7 @@ def test_ad_engine_chunked_prefill_stages_multimodal_runtime_metadata():
     req = _DummyRequest(tokens=tokens, begin=4, size=4, seq_slot=0)
     req.multimodal_positions = [2]
     req.multimodal_lengths = [4]
-    req.py_multimodal_data = None
+    req.py_multimodal_data = {"mm_contiguous_spans": [(2, 4)]}
 
     scheduled_requests = ScheduledRequests()
     scheduled_requests.context_requests_last_chunk.append(req)
@@ -376,7 +376,7 @@ def test_ad_engine_stages_mm_chunk_bounds_for_multimodal_block_reuse():
     req = _DummyRequest(tokens=tokens, begin=4, size=4, seq_slot=0)
     req.multimodal_positions = [2]
     req.multimodal_lengths = [4]
-    req.py_multimodal_data = None
+    req.py_multimodal_data = {"mm_contiguous_spans": [(2, 4)]}
 
     scheduled_requests = ScheduledRequests()
     scheduled_requests.context_requests_last_chunk.append(req)

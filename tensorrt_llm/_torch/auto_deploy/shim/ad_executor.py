@@ -76,9 +76,16 @@ from ..utils.dist_config import DistConfig
 from ..utils.logger import ad_logger
 from .interface import CachedSequenceInterface, GetInferenceModel
 
-# `layout_metadata` is a reserved multimodal payload used to carry request-level
-# layout semantics that the wrapper reconstructs into tensor kwargs separately.
-_RESERVED_MM_DATA_KEYS = frozenset({"layout_metadata"})
+# Non-tensor multimodal metadata consumed by _store_prefill_multimodal_metadata.
+# These keys are read directly from py_multimodal_data inside that helper and
+# must NOT leak into the generic extra_args dict (which expects tensors).
+_RESERVED_MM_DATA_KEYS = frozenset(
+    {
+        "layout_metadata",
+        "mm_contiguous_spans",
+        "special_token_offsets",
+    }
+)
 
 
 @dataclass
@@ -648,9 +655,25 @@ class ADEngine(ModelEngine):
                 count_list.append(0)
                 continue
 
+            # mm_contiguous_spans (per-contiguous-run) is required for correct
+            # chunked-prefill accounting.  Do NOT fall back to zip(mm_pos, mm_len)
+            # — those are per-item and wrong for non-contiguous video tokens.
+            mm_spans = (
+                req.py_multimodal_data.get("mm_contiguous_spans")
+                if req.py_multimodal_data
+                else None
+            )
+            if mm_spans is None:
+                raise ValueError(
+                    f"Request {i} has multimodal tokens but no mm_contiguous_spans "
+                    "in py_multimodal_data. This field is required for correct "
+                    "chunked-prefill accounting and must be set by the input "
+                    "processor (see registry.py)."
+                )
+
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,
-                mm_contiguous_spans=list(zip(mm_pos, mm_len)),
+                mm_contiguous_spans=mm_spans,
                 chunk_end_pos=end_compute,
                 special_token_offsets=list(special_offsets),
             )

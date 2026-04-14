@@ -17,27 +17,46 @@ from tensorrt_llm.logger import logger
 # Default hasher
 default_hasher = blake3
 
+# Shared key for mm_contiguous_spans in the untyped multimodal_data dict.
+# Used by registry.py (producer) and model_engine.py / ad_executor.py (consumers).
+MM_CONTIGUOUS_SPANS_KEY = "mm_contiguous_spans"
+
 
 @dataclass
 class MultimodalInput:
+    """Per-item multimodal metadata used for KV-cache hashing (C++ layer).
+
+    Fields here are indexed per multimodal *item* (one entry per image or
+    video), NOT per contiguous multimodal token run.  For models with non-contiguous
+    tokens (e.g. video frames separated by text), a single item may span
+    multiple disjoint multimodal token runs.  The true per-contiguous-run layout is
+    stored separately as ``mm_contiguous_spans`` in ``py_multimodal_data``
+    (see :data:`MM_CONTIGUOUS_SPANS_KEY`) and consumed by
+    :class:`MultimodalRuntimeData` for chunked-prefill accounting.
+    """
+
     multimodal_hashes: List[List[int]]
-    """Hash values for multimodal data items (e.g., images).
+    """Hash values for multimodal data items (e.g., images, videos).
 
     Each element is a list of 8 integers representing the hash digest of a multimodal item.
     """
 
     multimodal_positions: List[int]
-    """Starting positions of each contiguous multimodal token chunk in the token sequence.
+    """Starting token position of each multimodal *item* in the token sequence.
 
-    Contains only the start position of each chunk, not all positions of multimodal tokens.
-    This is different from mm_positions elsewhere which contains all positions.
+    One entry per item (image, video, …).  For items whose tokens are
+    non-contiguous (e.g. video with interleaved text separators), this is
+    the position of the *first* token of the item — it does NOT imply that
+    all ``multimodal_lengths[i]`` tokens starting here are contiguous.
     """
 
     multimodal_lengths: List[int]
-    """Length of each contiguous multimodal token chunk, including any special tokens.
+    """Total token count of each multimodal *item*, including any special tokens.
 
-    Each span is unique to its multimodal item and may include special tokens for some models,
-    (e.g., image_end_token, image_break_token for mistral3) mixed with the actual multimodal tokens.
+    One entry per item.  May include special tokens mixed with actual
+    multimodal tokens (e.g. image_end_token, image_break_token for
+    mistral3).  For non-contiguous items this is the *sum* across all
+    contiguous runs belonging to that item, not the length of a single run.
     """
 
     multimodal_uuids: Optional[List[Optional[str]]] = None
@@ -103,11 +122,11 @@ class MultimodalInput:
 
     @classmethod
     def from_components(
-            cls,
-            mm_hashes: List[List[int]],
-            mm_positions: List[int],
-            mm_lengths: List[int],
-            mm_uuids: Optional[List[Optional[str]]] = None,
+        cls,
+        mm_hashes: List[List[int]],
+        mm_positions: List[int],
+        mm_lengths: List[int],
+        mm_uuids: Optional[List[Optional[str]]] = None,
     ) -> 'MultimodalInput':
         return cls(multimodal_hashes=mm_hashes,
                    multimodal_positions=mm_positions,
@@ -223,8 +242,7 @@ class MultimodalRuntimeData:
             raise ValueError(
                 f"num_unseen_mm_tokens ({self.num_unseen_mm_tokens}) + "
                 f"num_mm_tokens_in_chunk ({self.num_mm_tokens_in_chunk}) + "
-                f"remainder ({remainder}) must be <= total ({total})"
-            )
+                f"remainder ({remainder}) must be <= total ({total})")
 
 
 @dataclass
