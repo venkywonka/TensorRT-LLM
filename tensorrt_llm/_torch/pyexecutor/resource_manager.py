@@ -768,10 +768,10 @@ class KVCacheManager(BaseResourceManager):
             if use_mrope:
                 dummy_mrope_position_ids = torch.arange(
                     0, token_num, dtype=torch.int32).expand(3, 1, -1).clone()
-                req.py_multimodal_data = {
-                    "mrope_config": {
-                        "mrope_position_ids": dummy_mrope_position_ids
-                    }
+                if req.py_multimodal_data is None:
+                    req.py_multimodal_data = {}
+                req.py_multimodal_data["mrope_config"] = {
+                    "mrope_position_ids": dummy_mrope_position_ids
                 }
                 if is_gen:
                     dummy_mrope_position_deltas = torch.zeros(
@@ -2379,10 +2379,10 @@ class KVCacheManagerV2(BaseResourceManager):
             if use_mrope:
                 dummy_mrope_position_ids = torch.arange(
                     0, token_num, dtype=torch.int32).expand(3, 1, -1).clone()
-                req.py_multimodal_data = {
-                    "mrope_config": {
-                        "mrope_position_ids": dummy_mrope_position_ids
-                    }
+                if req.py_multimodal_data is None:
+                    req.py_multimodal_data = {}
+                req.py_multimodal_data["mrope_config"] = {
+                    "mrope_position_ids": dummy_mrope_position_ids
                 }
                 if is_gen:
                     dummy_mrope_position_deltas = torch.zeros(
