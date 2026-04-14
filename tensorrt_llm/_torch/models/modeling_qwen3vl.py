@@ -262,26 +262,16 @@ class Qwen3VLInputProcessorBase(BaseMultimodalInputProcessor, BaseMultimodalDumm
     def get_num_tokens_per_video(self, *, video: List, **kwargs) -> int:
         """Return the number of video tokens for one video item.
 
-        Uses cached counts from the real processor run in __call__ when
-        available (populated from video_grid_thw). Falls back to running
-        the HF processor on a dummy prompt if the cache is empty (e.g.,
-        when called before __call__).
+        Uses cached counts from the real processor run in __call__,
+        populated from video_grid_thw. Must be called after __call__.
         """
-        if self._cached_video_token_counts:
-            return self._cached_video_token_counts.pop(0)
-
-        # Fallback: run HF processor on dummy prompt
-        dummy_prompt = "<|vision_start|><|video_pad|><|vision_end|>"
-        do_rescale = not isinstance(video[0], torch.Tensor)
-        processed = self.processor(
-            text=[dummy_prompt],
-            videos=[video],
-            padding=True,
-            do_rescale=do_rescale,
-            return_tensors="pt",
-        )
-        video_token_id = self.config.video_token_id
-        return (processed["input_ids"][0] == video_token_id).sum().item()
+        if not self._cached_video_token_counts:
+            raise RuntimeError(
+                "get_num_tokens_per_video called before __call__ populated "
+                "the video token count cache. Ensure __call__ is invoked "
+                "first so video_grid_thw is available."
+            )
+        return self._cached_video_token_counts.pop(0)
 
     def _preprocess(
         self, text: Dict[str, Any], mm_data: Dict[str, Any], mm_processor_kwargs: Dict[str, Any]
@@ -368,8 +358,7 @@ class Qwen3VLInputProcessorBase(BaseMultimodalInputProcessor, BaseMultimodalDumm
             # Tokens per video = t * (h / merge) * (w / merge).
             merge = self.config.vision_config.spatial_merge_size
             self._cached_video_token_counts = [
-                int(t) * (int(h) // merge) * (int(w) // merge)
-                for t, h, w in video_grid_thw
+                int(t) * (int(h) // merge) * (int(w) // merge) for t, h, w in video_grid_thw
             ]
 
         # NOTE: Even on the text-only prompts, we still need 'mrope_position_ids'.
