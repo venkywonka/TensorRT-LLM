@@ -1188,7 +1188,7 @@ class TestMultimodalRuntimeDataPreset:
     This covers the remainder NameError path we fixed."""
 
     def test_preset_counts_skip_computation(self):
-        """When both num_unseen and num_in_chunk are pre-set, __post_init__
+        """When both num_cached and num_in_chunk are pre-set, __post_init__
         should skip the counting block and not raise NameError on remainder."""
         runtime = MultimodalRuntimeData(
             past_seen_token_num=10,
@@ -1215,12 +1215,12 @@ class TestMultimodalRuntimeDataPreset:
         )
         assert runtime.num_cached_mm_tokens == 8
         assert runtime.num_mm_tokens_in_chunk == 8
-        # Special tokens at offsets [1, 5] are < 8 (unseen), [9, 13] are in [8, 16)
+        # Special tokens at offsets [1, 5] are < 8 (cached), [9, 13] are in [8, 16)
         assert runtime.num_cached_special_tokens == 2
         assert runtime.num_special_tokens_in_chunk == 2
 
     def test_preset_only_unseen_still_computes_chunk(self):
-        """When only num_unseen is pre-set but num_in_chunk is None,
+        """When only num_cached is pre-set but num_in_chunk is None,
         should still run computation (the 'or' condition)."""
         runtime = MultimodalRuntimeData(
             past_seen_token_num=5,
@@ -1272,7 +1272,6 @@ class TestCheckMmSpansPresent:
             "mrope_config": {},
             "special_token_offsets": [1, 2],
             "layout_metadata": {},
-            "item_types": ["image"],
         }
         _check_mm_spans_present(mm_data)  # should not raise
 

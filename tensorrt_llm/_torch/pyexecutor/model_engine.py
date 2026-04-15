@@ -78,7 +78,6 @@ _MM_METADATA_ONLY_KEYS = frozenset({
     "mm_contiguous_spans",
     "special_token_offsets",
     "layout_metadata",
-    "item_types",
 })
 
 

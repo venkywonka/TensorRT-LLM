@@ -672,13 +672,13 @@ class ADEngine(ModelEngine):
                 chunk_end_pos=end_compute,
                 special_token_offsets=list(special_offsets),
             )
-            num_unseen = runtime.num_cached_mm_tokens
+            num_cached = runtime.num_cached_mm_tokens
             num_in_chunk = runtime.num_mm_tokens_in_chunk
-            num_unseen_special = runtime.num_cached_special_tokens
+            num_cached_special = runtime.num_cached_special_tokens
             num_special_in_chunk = runtime.num_special_tokens_in_chunk
             total_mm_i = runtime.total_mm_tokens_in_request
             total_special_i = runtime.total_special_tokens_in_request
-            flat_start_i = cumsum_total_mm + num_unseen - num_unseen_special
+            flat_start_i = cumsum_total_mm + num_cached - num_cached_special
             flat_start_list.append(flat_start_i)
             count_list.append(num_in_chunk - num_special_in_chunk)
             cumsum_total_mm += total_mm_i - total_special_i
