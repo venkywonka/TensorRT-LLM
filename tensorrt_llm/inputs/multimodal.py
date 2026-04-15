@@ -24,43 +24,47 @@ MM_CONTIGUOUS_SPANS_KEY = "mm_contiguous_spans"
 
 @dataclass
 class MultimodalInput:
-    """Per-item multimodal metadata used for KV-cache hashing (C++ layer).
+    """Logical multimodal metadata — one entry per source media (image/video).
 
-    Fields here are indexed per multimodal *item* (one entry per image or
-    video), NOT per contiguous multimodal token run.  For models with non-contiguous
-    tokens (e.g. video frames separated by text), a single item may span
-    multiple disjoint multimodal token runs.  The true per-contiguous-run layout is
-    stored separately as ``mm_contiguous_spans`` in ``py_multimodal_data``
+    Used for KV-cache hashing (C++ layer).
+
+    Fields here are indexed per *logical* multimodal unit (one entry per
+    image or video), NOT per contiguous multimodal token run.  For models
+    with non-contiguous tokens (e.g. video frames separated by text), a
+    single logical unit may span multiple disjoint contiguous runs.  The
+    physical contiguous-run layout is stored separately as
+    ``mm_contiguous_spans`` in ``py_multimodal_data``
     (see :data:`MM_CONTIGUOUS_SPANS_KEY`) and consumed by
     :class:`MultimodalRuntimeData` for chunked-prefill accounting.
     """
 
     multimodal_hashes: List[List[int]]
-    """Hash values for multimodal data items (e.g., images, videos).
+    """Hash values for each logical multimodal unit (e.g., one image, one video).
 
-    Each element is a list of 8 integers representing the hash digest of a multimodal item.
+    Each element is a list of 8 integers representing the hash digest of one logical unit.
     """
 
     multimodal_positions: List[int]
-    """Starting token position of each multimodal *item* in the token sequence.
+    """Starting token position of each *logical* multimodal unit in the token sequence.
 
-    One entry per item (image, video, …).  For items whose tokens are
-    non-contiguous (e.g. video with interleaved text separators), this is
-    the position of the *first* token of the item — it does NOT imply that
-    all ``multimodal_lengths[i]`` tokens starting here are contiguous.
+    One entry per logical unit (image, video, …).  For units whose tokens
+    are non-contiguous (e.g. video with interleaved text separators), this
+    is the position of the *first* token of the unit — it does NOT imply
+    that all ``multimodal_lengths[i]`` tokens starting here are contiguous.
     """
 
     multimodal_lengths: List[int]
-    """Total token count of each multimodal *item*, including any special tokens.
+    """Total token count of each *logical* multimodal unit, including any special tokens.
 
-    One entry per item.  May include special tokens mixed with actual
-    multimodal tokens (e.g. image_end_token, image_break_token for
-    mistral3).  For non-contiguous items this is the *sum* across all
-    contiguous runs belonging to that item, not the length of a single run.
+    One entry per logical unit.  May include special tokens mixed with
+    actual multimodal tokens (e.g. image_end_token, image_break_token for
+    mistral3).  For non-contiguous units this is the *sum* across all
+    contiguous runs belonging to that unit, not the length of a single
+    contiguous run.
     """
 
     multimodal_uuids: Optional[List[Optional[str]]] = None
-    """Optional user-provided UUIDs for multimodal data items.
+    """Optional user-provided UUIDs for logical multimodal units.
 
     When provided, these UUIDs will be returned in KV cache events instead of the
     computed hash hex string. This enables deterministic cache identification across
@@ -68,7 +72,7 @@ class MultimodalInput:
 
     Each element can be:
     - A string UUID: Used as the cache identifier (returned in events)
-    - None: Falls back to content-based hashing for that item
+    - None: Falls back to content-based hashing for that unit
 
     If the UUID string is longer than 32 bytes, it will be hashed internally
     for cache key computation, but the original UUID string is preserved and
@@ -153,9 +157,9 @@ class MultimodalRuntimeData:
         past_seen_token_num: Total number of tokens already processed in previous
             iterations (KV cache reuse or prior chunks).
         mm_contiguous_spans: List of (start_position, token_count) tuples for each
-            contiguous run of MM tokens. Handles both contiguous tokens (one span per
-            item) and non-contiguous tokens (multiple spans per item, e.g., video
-            frames separated by text tokens).
+            contiguous run of MM tokens. A single logical unit (image/video) may
+            produce one contiguous span or multiple (e.g., video frames separated
+            by text tokens).
         chunk_end_pos: End position (exclusive) of the current chunk for chunked prefill.
         special_token_offsets: Sorted indices of special tokens (e.g., image_start,
             image_end) within the flat union of all MM token positions. These tokens
@@ -614,9 +618,9 @@ def apply_mm_hashes(
     mm_uuids: Optional[Dict[str, List[Optional[str]]]] = None,
     hash_lib=default_hasher
 ) -> Tuple[Dict[str, List[str]], Optional[List[Optional[str]]]]:
-    """Apply hashing to multimodal data items, combining UUID with content when provided.
+    """Apply hashing to multimodal data, one hash per logical unit (image/video).
 
-    When a UUID is provided for an item, the hash is computed from both the UUID
+    When a UUID is provided for a unit, the hash is computed from both the UUID
     and the content together: BLAKE3(UUID || Content). This ensures:
     - Cache correctness: Different content always produces different hashes
     - User isolation: Same content with different UUIDs produces different hashes
@@ -625,13 +629,13 @@ def apply_mm_hashes(
     Args:
         mm_data: Dictionary of modality -> data items
         mm_uuids: Optional dictionary of modality -> list of UUID strings.
-                  Use None for items that should use content-based hashing only.
+                  Use None for units that should use content-based hashing only.
         hash_lib: Hash function to use (default: blake3)
 
     Returns:
         Tuple of:
         - Dictionary of modality -> list of hash hex strings (64 chars each)
-        - Flattened list of original UUID strings (or None for content-hashed items)
+        - Flattened list of original UUID strings (or None for content-hashed units)
     """
 
     def _hash_content(hasher, item):
@@ -763,11 +767,11 @@ def int32_to_hexdigest(int32_values: List[int]) -> str:
 
 def find_mm_token_lengths(mm_data: Dict[str, Any],
                           input_processor: Any) -> List[int]:
-    """Get the maximum contiguous multimodal token lengths from multimodal data items.
+    """Get the token lengths of each logical multimodal unit.
 
-    Returns the total token count for each multimodal item, including any special tokens
+    Returns the total token count for each logical unit (image or video), including any special tokens
     (e.g., image_begin, image_end, image_break) that may be mixed with the actual
-    multimodal content tokens. This mm_token_lengths represents the full contiguous chunk from beginning
+    multimodal content tokens. This mm_token_lengths represents the full chunk from beginning
     to end, not just pure image/video/audio tokens.
     """
 
@@ -823,27 +827,29 @@ def find_mm_token_positions(
 
     Finds multimodal tokens (with IDs > vocab_size or matching mm_token_ids)
     and uses the provided lengths in num_mm_tokens to identify where each chunk starts.
-    Each chunk in num_mm_tokens may span a non-contiguous range of token positions when
-    text tokens (e.g., video frame separators) are interleaved with multimodal tokens.
+    Each logical unit in num_mm_tokens may span a non-contiguous range of token positions
+    when text tokens (e.g., video frame separators) are interleaved with multimodal tokens.
 
     Note: at least one of vocab_size or mm_token_ids must be provided. If mm_token_ids
     is provided, vocab_size is ignored.
 
     Args:
         input_ids: Token sequence (tensor, list, or numpy array)
-        num_mm_tokens: List of chunk lengths (count of MM tokens) for each multimodal item
+        num_mm_tokens: List of token counts for each logical multimodal unit
         vocab_size: Size of the model's vocabulary (used to identify tokens > vocab_size)
         mm_token_ids: Specific token IDs that represent multimodal tokens
         mm_special_token_ids: Specific token IDs that represent special multimodal tokens
 
     Returns:
         A 3-tuple of:
-        - start_positions: List of starting positions for each multimodal token chunk.
+        - start_positions: List of starting positions for each logical multimodal unit
+            (one entry per image/video).
         - start_special_token_positions: List of positions of special tokens
             in the union of all chunks (indices into the flat mm token list).
         - contiguous_spans: List of (start, length) tuples for each contiguous run
-            of MM tokens. Used by MultimodalRuntimeData for exact counting during
-            chunked prefill, especially when MM tokens are non-contiguous.
+            of MM tokens in ``input_ids``. Used by MultimodalRuntimeData for exact
+            counting during chunked prefill. A single logical unit may produce
+            multiple contiguous spans when its tokens are non-contiguous.
     """
     if mm_token_ids is None and vocab_size is None:
         raise ValueError(
@@ -892,7 +898,7 @@ def find_mm_token_positions(
         num_mm_tokens
     ), f"Number of multimodal tokens does not match sum of all lengths"
 
-    # Use num_mm_tokens to find the starting position of each chunk
+    # Use num_mm_tokens to find the starting position of each logical unit
     start_positions = []
     current_position = 0
 

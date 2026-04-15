@@ -19,11 +19,11 @@ class TextPrompt(TypedDict):
 
     multi_modal_uuids: NotRequired[Dict[str, List[Any]]]
     """
-    Optional user-provided UUIDs for multimodal items.
+    Optional user-provided UUIDs for logical multimodal units.
     Structure mirrors multi_modal_data: {"image": ["uuid1", None, "uuid3"]}.
-    When a UUID is provided for an item, it will be returned in KV cache events
+    When a UUID is provided for a unit, it will be returned in KV cache events
     instead of the computed content hash. Use None to fall back to content
-    hashing for specific items.
+    hashing for specific units.
     """
 
     mm_processor_kwargs: NotRequired[Dict[str, Any]]
@@ -50,11 +50,11 @@ class TokensPrompt(TypedDict):
 
     multi_modal_uuids: NotRequired[Dict[str, List[Any]]]
     """
-    Optional user-provided UUIDs for multimodal items.
+    Optional user-provided UUIDs for logical multimodal units.
     Structure mirrors multi_modal_data: {"image": ["uuid1", None, "uuid3"]}.
-    When a UUID is provided for an item, it will be returned in KV cache events
+    When a UUID is provided for a unit, it will be returned in KV cache events
     instead of the computed content hash. Use None to fall back to content
-    hashing for specific items.
+    hashing for specific units.
     """
 
     mm_processor_kwargs: NotRequired[Dict[str, Any]]

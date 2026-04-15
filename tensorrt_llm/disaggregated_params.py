@@ -35,7 +35,7 @@ class DisaggregatedParams:
          Each entry is a torch.Tensor of shape [num_tokens, vocab_size] (one per beam/sequence).
 
         multimodal_embedding_handles (List[Dict[str, Any]]): The resulting multimodal embedding handles from ViT.
-        multimodal_hashes (List[List[int]]): The multimodal hashes of each multimodal item in the request.
+        multimodal_hashes (List[List[int]]): The multimodal hashes of each logical multimodal unit in the request.
     """
 
     request_type: Optional[str] = None

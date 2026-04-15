@@ -657,7 +657,7 @@ class ADEngine(ModelEngine):
 
             # mm_contiguous_spans (per-contiguous-run) is required for correct
             # chunked-prefill accounting.  Do NOT fall back to zip(mm_pos, mm_len)
-            # — those are per-item and wrong for non-contiguous video tokens.
+            # — those are per logical unit and wrong for non-contiguous video tokens.
             mm_spans = (
                 req.py_multimodal_data.get("mm_contiguous_spans")
                 if req.py_multimodal_data

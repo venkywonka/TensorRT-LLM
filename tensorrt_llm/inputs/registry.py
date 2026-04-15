@@ -239,7 +239,7 @@ class BaseMultimodalInputProcessor(ABC):
     def get_mm_token_ids(self) -> Optional[Tensor]:
         """Return multimodal token IDs if available; otherwise None.
 
-        The token IDs filtered by this method should be contiguous for each multimodal item, i.e. special tokens if any should be included.
+        The token IDs filtered by this method should be contiguous for each logical multimodal unit, i.e. special tokens if any should be included.
         """
         if hasattr(self.processor, 'mm_token_ids'):
             return self.processor.mm_token_ids
@@ -728,7 +728,7 @@ def _get_single_mm_token_lengths(
     if not num_mm_tokens_by_key:
         return None
     # find_mm_token_lengths returns Dict[modality, List[int]], e.g. {"image": [2928, 2928]}.
-    # We need the list of per-item lengths (for find_mm_token_positions), We take the first modality's
+    # We need the list of per-logical-unit lengths (for find_mm_token_positions). We take the first modality's
     # list; multi-modality is not yet supported (see TODO in multimodal_hashing_process).
     num_mm_tokens = next(iter(num_mm_tokens_by_key.values()))
     if len(num_mm_tokens) <= 0:
@@ -811,7 +811,7 @@ def create_input_processor_with_hash(
         input_processor call and uses them; when both are None, calls input_processor.
 
         Supports optional user-provided UUIDs via 'multi_modal_uuids' in inputs.
-        When a UUID is provided for a multimodal item, it will be used as the
+        When a UUID is provided for a logical multimodal unit, it will be used as the
         cache identifier and returned in KV cache events instead of the content hash.
         """
         assert 'multi_modal_data' in inputs, "multi_modal_data must be provided for hashing support."
