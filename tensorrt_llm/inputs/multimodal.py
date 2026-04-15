@@ -857,8 +857,7 @@ def find_contiguous_mm_spans(
     if not torch.any(mm_mask):
         return [], []
 
-    # Get positions of all multimodal tokens
-    mm_positions = torch.where(mm_mask)[0].tolist()
+    mm_positions = torch.where(mm_mask)[0]
 
     # Identify special token offsets within the flat mm_positions list
     special_token_offsets: List[int] = []
@@ -867,19 +866,14 @@ def find_contiguous_mm_spans(
         special_mask = torch.isin(mm_token_values, mm_special_token_ids)
         special_token_offsets = torch.where(special_mask)[0].tolist()
 
-    # Compress flat mm_positions into contiguous spans: (start, length)
-    contiguous_spans: List[Tuple[int, int]] = []
-    if mm_positions:
-        span_start = mm_positions[0]
-        span_len = 1
-        for i in range(1, len(mm_positions)):
-            if mm_positions[i] == mm_positions[i - 1] + 1:
-                span_len += 1
-            else:
-                contiguous_spans.append((span_start, span_len))
-                span_start = mm_positions[i]
-                span_len = 1
-        contiguous_spans.append((span_start, span_len))
+    diffs = torch.diff(mm_positions)
+    gap_indices = torch.where(diffs != 1)[0] + 1
+    span_starts_idx = torch.cat([mm_positions.new_zeros(1), gap_indices])
+    span_ends_idx = torch.cat(
+        [gap_indices, mm_positions.new_tensor([len(mm_positions)])])
+    span_starts = mm_positions[span_starts_idx]
+    span_lengths = span_ends_idx - span_starts_idx
+    contiguous_spans = list(zip(span_starts.tolist(), span_lengths.tolist()))
 
     return contiguous_spans, special_token_offsets
 
