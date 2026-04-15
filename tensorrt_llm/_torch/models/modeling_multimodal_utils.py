@@ -274,7 +274,7 @@ def find_input_mm_embeds(
         runtime = param.multimodal_runtime
         if runtime is None:
             continue
-        local_start_pos = runtime.num_unseen_mm_tokens - runtime.num_unseen_special_tokens
+        local_start_pos = runtime.num_cached_mm_tokens - runtime.num_cached_special_tokens
         local_end_pos = local_start_pos + runtime.num_mm_tokens_in_chunk - runtime.num_special_tokens_in_chunk
         slices.append(
             (current_pos + local_start_pos, current_pos + local_end_pos))

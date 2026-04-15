@@ -758,7 +758,7 @@ def compute_mm_contiguous_spans_if_absent(
     if mm_data is None:
         return
     if "mm_contiguous_spans" in mm_data:
-        return  # already computed (e.g. by multimodal_hashing_process)
+        return
 
     vocab_size = input_processor.get_vocab_size()
     mm_token_ids = input_processor.get_mm_token_ids()

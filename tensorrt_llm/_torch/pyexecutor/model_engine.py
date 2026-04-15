@@ -73,10 +73,6 @@ from .resource_manager import (BaseResourceManager, KVCacheManager,
 from .sampler import SampleStateTensors
 from .scheduler import ScheduledRequests
 
-# Keys in py_multimodal_data that carry metadata (not vision content).
-# If py_multimodal_data has ONLY these keys and mm_contiguous_spans is absent,
-# the request has no vision tokens (e.g. mrope-only warmup) and is safe.
-# See also: ad_executor.py _RESERVED_MM_DATA_KEYS (tensor-filtering, not discrimination).
 _MM_METADATA_ONLY_KEYS = frozenset({
     "mrope_config",
     "mm_contiguous_spans",
@@ -87,13 +83,7 @@ _MM_METADATA_ONLY_KEYS = frozenset({
 
 
 def _check_mm_spans_present(py_multimodal_data: Optional[dict]) -> None:
-    """Raise ValueError if vision data is present but mm_contiguous_spans is missing.
-
-    This mirrors the fail-fast in ad_executor.py:662-668.  The discriminator
-    uses ``_MM_METADATA_ONLY_KEYS``: if every key in the dict belongs to that
-    set then the request carries only metadata (e.g. mrope position encoding)
-    and no vision tokens — no spans required.
-    """
+    """Raise if vision data present but mm_contiguous_spans missing."""
     if not py_multimodal_data:
         return
     if "mm_contiguous_spans" in py_multimodal_data:
@@ -102,9 +92,7 @@ def _check_mm_spans_present(py_multimodal_data: Optional[dict]) -> None:
     if vision_keys:
         raise ValueError(
             f"Request has multimodal data keys {vision_keys} but no "
-            "mm_contiguous_spans in py_multimodal_data. This field is "
-            "required for correct chunked-prefill accounting and must "
-            "be set by the input processor (see registry.py).")
+            "mm_contiguous_spans in py_multimodal_data.")
 
 
 class ModelEngine(ABC):

@@ -26,7 +26,7 @@ class TestMultimodalRuntimeData:
             special_token_offsets=[])
 
         # All tokens should be cached since past_seen_token_num (20) >= all positions + lengths
-        assert runtime.num_unseen_mm_tokens == 20
+        assert runtime.num_cached_mm_tokens == 20
         assert runtime.num_mm_tokens_in_chunk == 0
 
     def test_no_cached_multimodal_tokens(self):
@@ -38,7 +38,7 @@ class TestMultimodalRuntimeData:
             special_token_offsets=[])
 
         # No multimodal tokens should be cached
-        assert runtime.num_unseen_mm_tokens == 0
+        assert runtime.num_cached_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 20
 
     def test_partial_caching_with_chunk_boundaries(self):
@@ -52,7 +52,7 @@ class TestMultimodalRuntimeData:
         # Span [10,15): 5 tokens fully cached
         # Span [18,26): 0 cached, 8 in chunk
         # Span [25,32): 0 cached, 5 in chunk [25,30), 2 beyond
-        assert runtime.num_unseen_mm_tokens == 5
+        assert runtime.num_cached_mm_tokens == 5
         assert runtime.num_mm_tokens_in_chunk == 13
 
     def test_chunk_boundary_case1(self):
@@ -66,7 +66,7 @@ class TestMultimodalRuntimeData:
         # Span [8,14): 4 cached (8-12), 2 in chunk (12-14)
         # Span [16,20): 0 cached, 4 in chunk (16-20)
         # Span [22,30): beyond chunk_end_pos
-        assert runtime.num_unseen_mm_tokens == 4
+        assert runtime.num_cached_mm_tokens == 4
         assert runtime.num_mm_tokens_in_chunk == 6
 
     def test_chunk_boundary_case2(self):
@@ -80,7 +80,7 @@ class TestMultimodalRuntimeData:
 
         expected_cached = 3 + 4 + 5 + 6 + 5  # 23 tokens
         expected_current_chunk = 2 + 8  # 10 tokens
-        assert runtime.num_unseen_mm_tokens == expected_cached
+        assert runtime.num_cached_mm_tokens == expected_cached
         assert runtime.num_mm_tokens_in_chunk == expected_current_chunk
 
     def test_validation_errors(self):
@@ -122,7 +122,7 @@ class TestMultimodalRuntimeData:
                                         chunk_end_pos=256,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 0
+        assert runtime.num_cached_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 238
         assert runtime.total_mm_tokens_in_request == 588
 
@@ -142,7 +142,7 @@ class TestNonContiguousMultimodalRuntimeData:
                                         chunk_end_pos=50,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 0
+        assert runtime.num_cached_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 20  # both full regions
 
     def test_two_images_separated_chunk_in_text_gap(self):
@@ -153,7 +153,7 @@ class TestNonContiguousMultimodalRuntimeData:
                                         chunk_end_pos=30,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 10  # first image fully cached
+        assert runtime.num_cached_mm_tokens == 10  # first image fully cached
         assert runtime.num_mm_tokens_in_chunk == 0  # gap has no MM tokens
 
     def test_two_images_separated_chunk_hits_second_only(self):
@@ -164,7 +164,7 @@ class TestNonContiguousMultimodalRuntimeData:
                                         chunk_end_pos=45,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 10  # first image fully cached
+        assert runtime.num_cached_mm_tokens == 10  # first image fully cached
         assert runtime.num_mm_tokens_in_chunk == 10  # second image fully in chunk
 
     def test_two_images_separated_chunk_straddles_second(self):
@@ -175,7 +175,7 @@ class TestNonContiguousMultimodalRuntimeData:
                                         chunk_end_pos=35,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 10  # first image fully cached
+        assert runtime.num_cached_mm_tokens == 10  # first image fully cached
         assert runtime.num_mm_tokens_in_chunk == 5  # 5 tokens of second image [30,35)
 
     def test_three_images_chunk_hits_middle_only(self):
@@ -186,7 +186,7 @@ class TestNonContiguousMultimodalRuntimeData:
                                         chunk_end_pos=45,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 10  # first image cached
+        assert runtime.num_cached_mm_tokens == 10  # first image cached
         assert runtime.num_mm_tokens_in_chunk == 10  # second image fully in chunk
 
     def test_three_images_chunk_partial_first_full_second_miss_third(self):
@@ -198,7 +198,7 @@ class TestNonContiguousMultimodalRuntimeData:
                                         chunk_end_pos=45,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 5  # [5,10) of first image cached
+        assert runtime.num_cached_mm_tokens == 5  # [5,10) of first image cached
         assert runtime.num_mm_tokens_in_chunk == 15  # 5 from first + 10 from second
 
     def test_scattered_video_frames_qwen3vl_style(self):
@@ -211,7 +211,7 @@ class TestNonContiguousMultimodalRuntimeData:
                                         chunk_end_pos=60,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 20  # frame1 fully cached
+        assert runtime.num_cached_mm_tokens == 20  # frame1 fully cached
         assert runtime.num_mm_tokens_in_chunk == 20  # frame2 fully in chunk [35,55)
 
     def test_scattered_frames_chunk_straddles_gap_and_frame(self):
@@ -223,7 +223,7 @@ class TestNonContiguousMultimodalRuntimeData:
                                         chunk_end_pos=55,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 15  # [10,25) of first frame cached
+        assert runtime.num_cached_mm_tokens == 15  # [10,25) of first frame cached
         assert runtime.num_mm_tokens_in_chunk == 10  # 5 from first [25,30) + 5 from second [50,55)
 
     def test_large_gap_between_images(self):
@@ -234,7 +234,7 @@ class TestNonContiguousMultimodalRuntimeData:
                                         chunk_end_pos=100,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 0
+        assert runtime.num_cached_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 5  # only first image
 
 
@@ -259,7 +259,7 @@ class TestNonContiguousWithContiguousSpans:
                                         chunk_end_pos=256,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 0
+        assert runtime.num_cached_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 238
 
     def test_video_three_groups_chunk_in_middle(self):
@@ -273,7 +273,7 @@ class TestNonContiguousWithContiguousSpans:
 
         # Cached: 196 (group1) + 42 (group2 partial [214,256)) = 238
         # In chunk: 154 (group2 remainder [256,410)) + 94 (group3 partial [418,512)) = 248
-        assert runtime.num_unseen_mm_tokens == 238
+        assert runtime.num_cached_mm_tokens == 238
         assert runtime.num_mm_tokens_in_chunk == 248
 
     def test_video_three_groups_last_chunk(self):
@@ -287,7 +287,7 @@ class TestNonContiguousWithContiguousSpans:
 
         # Cached: 196 + 196 + 94 = 486
         # In chunk: 102 (group3 remainder [512,614))
-        assert runtime.num_unseen_mm_tokens == 486
+        assert runtime.num_cached_mm_tokens == 486
         assert runtime.num_mm_tokens_in_chunk == 102
 
     def test_single_span_matches_contiguous(self):
@@ -297,7 +297,7 @@ class TestNonContiguousWithContiguousSpans:
                                         chunk_end_pos=80,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 40  # [10,50)
+        assert runtime.num_cached_mm_tokens == 40  # [10,50)
         assert runtime.num_mm_tokens_in_chunk == 30  # [50,80)
 
     def test_all_cached_with_spans(self):
@@ -308,7 +308,7 @@ class TestNonContiguousWithContiguousSpans:
                                         chunk_end_pos=800,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 392
+        assert runtime.num_cached_mm_tokens == 392
         assert runtime.num_mm_tokens_in_chunk == 0
 
     def test_chunk_in_text_gap(self):
@@ -319,7 +319,7 @@ class TestNonContiguousWithContiguousSpans:
                                         chunk_end_pos=200,
                                         special_token_offsets=[])
 
-        assert runtime.num_unseen_mm_tokens == 50  # group1 fully cached
+        assert runtime.num_cached_mm_tokens == 50  # group1 fully cached
         assert runtime.num_mm_tokens_in_chunk == 0  # gap has no MM tokens
 
 
@@ -327,28 +327,28 @@ class TestFindInputMmEmbed:
     """Focused test cases for find_input_mm_embeds function - testing both KV cache reuse and chunked prefill."""
 
     def create_mock_runtime(self,
-                            num_unseen_mm_tokens: int,
+                            num_cached_mm_tokens: int,
                             num_mm_tokens_in_chunk: int,
                             mm_token_lengths: List[int],
-                            num_unseen_special_tokens: int = 0,
+                            num_cached_special_tokens: int = 0,
                             num_special_tokens_in_chunk: int = 0,
                             total_special_tokens_in_request: int = 0):
         """Helper to create a mock MultimodalRuntimeData."""
         runtime = Mock(spec=MultimodalRuntimeData)
-        runtime.num_unseen_mm_tokens = num_unseen_mm_tokens
+        runtime.num_cached_mm_tokens = num_cached_mm_tokens
         runtime.num_mm_tokens_in_chunk = num_mm_tokens_in_chunk
         runtime.total_mm_tokens_in_request = sum(mm_token_lengths)
-        runtime.num_unseen_special_tokens = num_unseen_special_tokens
+        runtime.num_cached_special_tokens = num_cached_special_tokens
         runtime.num_special_tokens_in_chunk = num_special_tokens_in_chunk
         runtime.total_special_tokens_in_request = total_special_tokens_in_request
 
         return runtime
 
-    def create_multimodal_params(self, num_unseen_mm_tokens: int,
+    def create_multimodal_params(self, num_cached_mm_tokens: int,
                                  num_mm_tokens_in_chunk: int,
                                  mm_token_lengths: List[int]):
         """Helper to create MultimodalParams with runtime data."""
-        runtime = self.create_mock_runtime(num_unseen_mm_tokens,
+        runtime = self.create_mock_runtime(num_cached_mm_tokens,
                                            num_mm_tokens_in_chunk,
                                            mm_token_lengths)
         return MultimodalParams(multimodal_runtime=runtime)
@@ -634,16 +634,16 @@ class TestFindInputMmEmbed:
         mm_embeds = [torch.randn(12, 512)
                      ]  # Pre-concatenated: (8-2) + (10-4) = 6 + 6 = 12 tokens
         multimodal_params = [
-            self.create_mock_runtime(num_unseen_mm_tokens=2,
+            self.create_mock_runtime(num_cached_mm_tokens=2,
                                      num_mm_tokens_in_chunk=6,
                                      mm_token_lengths=[8],
-                                     num_unseen_special_tokens=1,
+                                     num_cached_special_tokens=1,
                                      num_special_tokens_in_chunk=1,
                                      total_special_tokens_in_request=2),
-            self.create_mock_runtime(num_unseen_mm_tokens=4,
+            self.create_mock_runtime(num_cached_mm_tokens=4,
                                      num_mm_tokens_in_chunk=6,
                                      mm_token_lengths=[10],
-                                     num_unseen_special_tokens=2,
+                                     num_cached_special_tokens=2,
                                      num_special_tokens_in_chunk=2,
                                      total_special_tokens_in_request=4)
         ]
@@ -1183,7 +1183,7 @@ class TestFindMmTokenPositions:
 
 
 class TestMultimodalRuntimeDataPreset:
-    """Test MultimodalRuntimeData when num_unseen_mm_tokens and
+    """Test MultimodalRuntimeData when num_cached_mm_tokens and
     num_mm_tokens_in_chunk are pre-set (skipping the computation block).
     This covers the remainder NameError path we fixed."""
 
@@ -1195,11 +1195,11 @@ class TestMultimodalRuntimeDataPreset:
             mm_contiguous_spans=[(0, 5), (5, 5)],
             chunk_end_pos=20,
             special_token_offsets=[],
-            num_unseen_mm_tokens=5,
+            num_cached_mm_tokens=5,
             num_mm_tokens_in_chunk=5,
         )
         # Pre-set values should be preserved
-        assert runtime.num_unseen_mm_tokens == 5
+        assert runtime.num_cached_mm_tokens == 5
         assert runtime.num_mm_tokens_in_chunk == 5
         assert runtime.total_mm_tokens_in_request == 10
 
@@ -1210,13 +1210,13 @@ class TestMultimodalRuntimeDataPreset:
             mm_contiguous_spans=[(0, 8), (10, 8)],
             chunk_end_pos=20,
             special_token_offsets=[1, 5, 9, 13],
-            num_unseen_mm_tokens=8,
+            num_cached_mm_tokens=8,
             num_mm_tokens_in_chunk=8,
         )
-        assert runtime.num_unseen_mm_tokens == 8
+        assert runtime.num_cached_mm_tokens == 8
         assert runtime.num_mm_tokens_in_chunk == 8
         # Special tokens at offsets [1, 5] are < 8 (unseen), [9, 13] are in [8, 16)
-        assert runtime.num_unseen_special_tokens == 2
+        assert runtime.num_cached_special_tokens == 2
         assert runtime.num_special_tokens_in_chunk == 2
 
     def test_preset_only_unseen_still_computes_chunk(self):
@@ -1227,7 +1227,7 @@ class TestMultimodalRuntimeDataPreset:
             mm_contiguous_spans=[(0, 10)],
             chunk_end_pos=8,
             special_token_offsets=[],
-            num_unseen_mm_tokens=5,
+            num_cached_mm_tokens=5,
             # num_mm_tokens_in_chunk=None triggers computation
         )
         # Should compute num_mm_tokens_in_chunk from spans

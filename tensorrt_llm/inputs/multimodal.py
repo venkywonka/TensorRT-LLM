@@ -17,51 +17,26 @@ from tensorrt_llm.logger import logger
 # Default hasher
 default_hasher = blake3
 
-# Shared key for mm_contiguous_spans in the untyped multimodal_data dict.
-# Used by registry.py (producer) and model_engine.py / ad_executor.py (consumers).
-MM_CONTIGUOUS_SPANS_KEY = "mm_contiguous_spans"
-
 
 @dataclass
 class MultimodalInput:
-    """Logical multimodal metadata — one entry per source media (image/video).
+    """Per-logical-unit multimodal metadata for KV-cache hashing (C++ layer).
 
-    Used for KV-cache hashing (C++ layer).
-
-    Fields here are indexed per *logical* multimodal unit (one entry per
-    image or video), NOT per contiguous multimodal token run.  For models
-    with non-contiguous tokens (e.g. video frames separated by text), a
-    single logical unit may span multiple disjoint contiguous runs.  The
-    physical contiguous-run layout is stored separately as
-    ``mm_contiguous_spans`` in ``py_multimodal_data``
-    (see :data:`MM_CONTIGUOUS_SPANS_KEY`) and consumed by
-    :class:`MultimodalRuntimeData` for chunked-prefill accounting.
+    Indexed per logical unit (one image, one video), NOT per contiguous token
+    run. Non-contiguous tokens (e.g. video frames with text separators) are
+    tracked via ``mm_contiguous_spans`` in ``py_multimodal_data``.
     """
 
     multimodal_hashes: List[List[int]]
-    """Hash values for each logical multimodal unit (e.g., one image, one video).
-
-    Each element is a list of 8 integers representing the hash digest of one logical unit.
-    """
+    """Hash digest per logical unit (list of 8 int32 each)."""
 
     multimodal_positions: List[int]
-    """Starting token position of each *logical* multimodal unit in the token sequence.
-
-    One entry per logical unit (image, video, …).  For units whose tokens
-    are non-contiguous (e.g. video with interleaved text separators), this
-    is the position of the *first* token of the unit — it does NOT imply
-    that all ``multimodal_lengths[i]`` tokens starting here are contiguous.
-    """
+    """Starting token position of each logical unit. For non-contiguous units
+    this is the position of the *first* token."""
 
     multimodal_lengths: List[int]
-    """Total token count of each *logical* multimodal unit, including any special tokens.
-
-    One entry per logical unit.  May include special tokens mixed with
-    actual multimodal tokens (e.g. image_end_token, image_break_token for
-    mistral3).  For non-contiguous units this is the *sum* across all
-    contiguous runs belonging to that unit, not the length of a single
-    contiguous run.
-    """
+    """Total token count per logical unit, including special tokens.
+    For non-contiguous units this is the sum across all contiguous runs."""
 
     multimodal_uuids: Optional[List[Optional[str]]] = None
     """Optional user-provided UUIDs for logical multimodal units.
@@ -154,36 +129,29 @@ class MultimodalRuntimeData:
     for each request sequence during both KV cache reuse and chunked prefill scenarios.
 
     Attributes:
-        past_seen_token_num: Total number of tokens already processed in previous
-            iterations (KV cache reuse or prior chunks).
-        mm_contiguous_spans: List of (start_position, token_count) tuples for each
-            contiguous run of MM tokens. A single logical unit (image/video) may
-            produce one contiguous span or multiple (e.g., video frames separated
-            by text tokens).
-        chunk_end_pos: End position (exclusive) of the current chunk for chunked prefill.
-        special_token_offsets: Sorted indices of special tokens (e.g., image_start,
-            image_end) within the flat union of all MM token positions. These tokens
-            occupy MM positions but get text embeddings, not encoder embeddings.
+        past_seen_token_num: Total tokens already processed in previous iterations (cached)
+        mm_contiguous_spans: List of (start_position, token_count) per contiguous MM token run
+        chunk_end_pos: End position of the current chunk for chunked prefill
+        special_token_offsets: Indices of special tokens in the flat MM token union
 
-        num_unseen_mm_tokens: Number of MM tokens already processed in prior chunks,
-            used as a skip offset when slicing encoder embeddings (computed).
-        num_mm_tokens_in_chunk: Number of MM tokens in the current chunk (computed).
-        total_mm_tokens_in_request: Total MM tokens across all chunks (computed).
+        num_cached_mm_tokens: Number of MM tokens that are cached (computed)
+        num_mm_tokens_in_chunk: Number of MM tokens in the current chunk (computed)
+        total_mm_tokens_in_request: Total MM tokens in the request sequence (computed)
 
-        num_unseen_special_tokens: Special tokens in the already-processed region (computed).
-        num_special_tokens_in_chunk: Special tokens in the current chunk (computed).
-        total_special_tokens_in_request: Total special tokens in the request (computed).
+        num_cached_special_tokens: Number of special tokens that are cached (computed)
+        num_special_tokens_in_chunk: Number of special tokens in the current chunk (computed)
+        total_special_tokens_in_request: Total special tokens in the request (computed)
     """
     past_seen_token_num: int
     mm_contiguous_spans: List[Tuple[int, int]]
     chunk_end_pos: int
     special_token_offsets: List[int]
 
-    num_unseen_mm_tokens: Optional[int] = None
+    num_cached_mm_tokens: Optional[int] = None
     num_mm_tokens_in_chunk: Optional[int] = None
     total_mm_tokens_in_request: Optional[int] = None
 
-    num_unseen_special_tokens: Optional[int] = 0
+    num_cached_special_tokens: Optional[int] = 0
     num_special_tokens_in_chunk: Optional[int] = 0
     total_special_tokens_in_request: Optional[int] = 0
 
@@ -208,15 +176,15 @@ class MultimodalRuntimeData:
             )
 
         remainder = 0
-        if self.num_unseen_mm_tokens is None or self.num_mm_tokens_in_chunk is None:
-            self.num_unseen_mm_tokens = 0
+        if self.num_cached_mm_tokens is None or self.num_mm_tokens_in_chunk is None:
+            self.num_cached_mm_tokens = 0
             self.num_mm_tokens_in_chunk = 0
             for pos, length in self.mm_contiguous_spans:
                 span_end = pos + length
                 if span_end <= self.past_seen_token_num:
-                    self.num_unseen_mm_tokens += length
+                    self.num_cached_mm_tokens += length
                 elif pos < self.past_seen_token_num:
-                    self.num_unseen_mm_tokens += self.past_seen_token_num - pos
+                    self.num_cached_mm_tokens += self.past_seen_token_num - pos
                     self.num_mm_tokens_in_chunk += min(
                         self.chunk_end_pos, span_end) - self.past_seen_token_num
                 else:
@@ -231,20 +199,20 @@ class MultimodalRuntimeData:
         if len(self.special_token_offsets) > 0:
             # special_token_offsets are sorted indices into the mm token union
             s = self.special_token_offsets
-            self.num_unseen_special_tokens = bisect.bisect_left(
-                s, self.num_unseen_mm_tokens)
-            mm_tokens_end_pos = self.num_unseen_mm_tokens + self.num_mm_tokens_in_chunk
+            self.num_cached_special_tokens = bisect.bisect_left(
+                s, self.num_cached_mm_tokens)
+            mm_tokens_end_pos = self.num_cached_mm_tokens + self.num_mm_tokens_in_chunk
             self.num_special_tokens_in_chunk = (
                 bisect.bisect_left(s, mm_tokens_end_pos) -
-                self.num_unseen_special_tokens)
+                self.num_cached_special_tokens)
 
             self.total_special_tokens_in_request = len(
                 self.special_token_offsets)
 
         total = sum(length for _, length in self.mm_contiguous_spans)
-        if self.num_unseen_mm_tokens + self.num_mm_tokens_in_chunk + remainder > total:
+        if self.num_cached_mm_tokens + self.num_mm_tokens_in_chunk + remainder > total:
             raise ValueError(
-                f"num_unseen_mm_tokens ({self.num_unseen_mm_tokens}) + "
+                f"num_cached_mm_tokens ({self.num_cached_mm_tokens}) + "
                 f"num_mm_tokens_in_chunk ({self.num_mm_tokens_in_chunk}) + "
                 f"remainder ({remainder}) must be <= total ({total})")
 

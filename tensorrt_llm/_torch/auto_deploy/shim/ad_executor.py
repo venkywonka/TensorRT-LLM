@@ -655,9 +655,6 @@ class ADEngine(ModelEngine):
                 count_list.append(0)
                 continue
 
-            # mm_contiguous_spans (per-contiguous-run) is required for correct
-            # chunked-prefill accounting.  Do NOT fall back to zip(mm_pos, mm_len)
-            # — those are per logical unit and wrong for non-contiguous video tokens.
             mm_spans = (
                 req.py_multimodal_data.get("mm_contiguous_spans")
                 if req.py_multimodal_data
@@ -665,10 +662,8 @@ class ADEngine(ModelEngine):
             )
             if mm_spans is None:
                 raise ValueError(
-                    f"Request {i} has multimodal tokens but no mm_contiguous_spans "
-                    "in py_multimodal_data. This field is required for correct "
-                    "chunked-prefill accounting and must be set by the input "
-                    "processor (see registry.py)."
+                    f"Request {i} has multimodal tokens but no "
+                    "mm_contiguous_spans in py_multimodal_data."
                 )
 
             runtime = MultimodalRuntimeData(
@@ -677,9 +672,9 @@ class ADEngine(ModelEngine):
                 chunk_end_pos=end_compute,
                 special_token_offsets=list(special_offsets),
             )
-            num_unseen = runtime.num_unseen_mm_tokens
+            num_unseen = runtime.num_cached_mm_tokens
             num_in_chunk = runtime.num_mm_tokens_in_chunk
-            num_unseen_special = runtime.num_unseen_special_tokens
+            num_unseen_special = runtime.num_cached_special_tokens
             num_special_in_chunk = runtime.num_special_tokens_in_chunk
             total_mm_i = runtime.total_mm_tokens_in_request
             total_special_i = runtime.total_special_tokens_in_request
