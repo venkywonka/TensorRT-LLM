@@ -85,7 +85,7 @@ def _check_mm_spans_present(py_multimodal_data: Optional[dict]) -> None:
     """Raise if vision data present but mm_contiguous_spans missing."""
     if not py_multimodal_data:
         return
-    if "mm_contiguous_spans" in py_multimodal_data:
+    if py_multimodal_data.get("mm_contiguous_spans") is not None:
         return
     vision_keys = set(py_multimodal_data.keys()) - _MM_METADATA_ONLY_KEYS
     if vision_keys:

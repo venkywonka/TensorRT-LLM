@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 """Multimodal utilities for handling images and other media types in TensorRT-LLM."""
 
 import bisect
@@ -873,7 +875,8 @@ def find_contiguous_mm_spans(
         [gap_indices, mm_positions.new_tensor([len(mm_positions)])])
     span_starts = mm_positions[span_starts_idx]
     span_lengths = span_ends_idx - span_starts_idx
-    contiguous_spans = list(zip(span_starts.tolist(), span_lengths.tolist()))
+    contiguous_spans = list(
+        zip(span_starts.tolist(), span_lengths.tolist(), strict=True))
 
     return contiguous_spans, special_token_offsets
 
