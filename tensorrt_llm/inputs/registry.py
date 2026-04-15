@@ -20,8 +20,9 @@ from ..sampling_params import SamplingParams
 from .content_format import ContentFormat
 from .data import TextPrompt
 from .multimodal import (MultimodalInput, apply_mm_hashes, default_hasher,
-                         find_mm_token_lengths, find_mm_token_positions,
-                         hexdigest_to_int32, validate_mm_inputs)
+                         find_contiguous_mm_spans, find_mm_token_lengths,
+                         find_mm_token_positions, hexdigest_to_int32,
+                         validate_mm_inputs)
 
 N = TypeVar("N", bound=Type[nn.Module])
 
@@ -736,6 +737,49 @@ def _get_single_mm_token_lengths(
     return num_mm_tokens
 
 
+def compute_mm_contiguous_spans_if_absent(
+    prompt_token_ids: List[int],
+    extra_processed_inputs: Optional[ExtraProcessedInputs],
+    input_processor: BaseMultimodalInputProcessor,
+) -> None:
+    """Ensure mm_contiguous_spans is present in extra_processed_inputs.
+
+    Idempotent: if the field already exists, this is a no-op.  Otherwise,
+    scans ``prompt_token_ids`` for contiguous runs of multimodal tokens
+    using vocabulary / token-ID metadata from ``input_processor`` and stores
+    the result in ``extra_processed_inputs["multimodal_data"]``.
+
+    Safe to call after any input-processing path — if the processor cannot
+    provide vocabulary or MM token information, the call is silently skipped.
+    """
+    if extra_processed_inputs is None:
+        return
+    mm_data = extra_processed_inputs.get("multimodal_data")
+    if mm_data is None:
+        return
+    if "mm_contiguous_spans" in mm_data:
+        return  # already computed (e.g. by multimodal_hashing_process)
+
+    vocab_size = input_processor.get_vocab_size()
+    mm_token_ids = input_processor.get_mm_token_ids()
+    if vocab_size is None and mm_token_ids is None:
+        logger.debug(
+            "compute_mm_contiguous_spans_if_absent: processor provides neither "
+            "vocab_size nor mm_token_ids — skipping span computation.")
+        return
+
+    mm_special_token_ids = input_processor.get_mm_special_token_ids()
+    contiguous_spans, special_token_offsets = find_contiguous_mm_spans(
+        input_ids=prompt_token_ids,
+        vocab_size=vocab_size,
+        mm_token_ids=mm_token_ids,
+        mm_special_token_ids=mm_special_token_ids,
+    )
+    mm_data["mm_contiguous_spans"] = contiguous_spans
+    if special_token_offsets and "special_token_offsets" not in mm_data:
+        mm_data["special_token_offsets"] = special_token_offsets
+
+
 def create_input_processor_with_hash(
     input_processor: BaseMultimodalInputProcessor,
     hash_lib=default_hasher,
@@ -922,7 +966,12 @@ def create_input_processor_with_hash(
                     input_processor.multimodal_hashing_supported = False
                     logger.warning("Falling back to basic input processor.")
                     try:
-                        return input_processor(inputs, sampling_params)
+                        prompt_token_ids, extra_processed_inputs = input_processor(
+                            inputs, sampling_params)
+                        compute_mm_contiguous_spans_if_absent(
+                            prompt_token_ids, extra_processed_inputs,
+                            input_processor)
+                        return prompt_token_ids, extra_processed_inputs
                     except Exception as e2:
                         logger.warning(f"Basic input processor failed: {e}.")
                         logger.debug(traceback.format_exc())
@@ -931,7 +980,12 @@ def create_input_processor_with_hash(
                     raise e
         else:
             try:
-                return input_processor(inputs, sampling_params)
+                prompt_token_ids, extra_processed_inputs = input_processor(
+                    inputs, sampling_params)
+                compute_mm_contiguous_spans_if_absent(prompt_token_ids,
+                                                      extra_processed_inputs,
+                                                      input_processor)
+                return prompt_token_ids, extra_processed_inputs
             except Exception as e:
                 logger.warning(f"Basic input processor failed: {e}.")
                 logger.debug(traceback.format_exc())

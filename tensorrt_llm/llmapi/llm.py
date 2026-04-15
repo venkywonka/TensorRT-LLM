@@ -35,9 +35,9 @@ from ..executor.postproc_worker import PostprocParams
 from ..executor.request import DEFAULT_REQUEST_PRIORITY
 from ..executor.utils import (RequestError, create_mpi_comm_session,
                               get_spawn_proxy_process_env)
-from ..inputs import (PromptInputs, create_input_processor,
-                      create_input_processor_with_hash, get_cache_salt_id,
-                      prompt_inputs)
+from ..inputs import (PromptInputs, compute_mm_contiguous_spans_if_absent,
+                      create_input_processor, create_input_processor_with_hash,
+                      get_cache_salt_id, prompt_inputs)
 from ..logger import logger
 from ..sampling_params import SamplingParams
 from ..scheduling_params import SchedulingParams
@@ -641,6 +641,9 @@ class BaseLLM:
                     BaseMultimodalInputProcessor,
                     self.input_processor).attach_multimodal_embeddings(
                         inputs, mm_embedding_info, sampling_params)
+                compute_mm_contiguous_spans_if_absent(
+                    prompt_token_ids, extra_processed_inputs,
+                    cast(BaseMultimodalInputProcessor, self.input_processor))
             else:
                 with nvtx_range_debug("input_processor"):
                     prompt_token_ids, extra_processed_inputs = self.input_processor(

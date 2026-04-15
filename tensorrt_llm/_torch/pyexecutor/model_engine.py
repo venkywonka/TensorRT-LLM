@@ -73,6 +73,39 @@ from .resource_manager import (BaseResourceManager, KVCacheManager,
 from .sampler import SampleStateTensors
 from .scheduler import ScheduledRequests
 
+# Keys in py_multimodal_data that carry metadata (not vision content).
+# If py_multimodal_data has ONLY these keys and mm_contiguous_spans is absent,
+# the request has no vision tokens (e.g. mrope-only warmup) and is safe.
+# See also: ad_executor.py _RESERVED_MM_DATA_KEYS (tensor-filtering, not discrimination).
+_MM_METADATA_ONLY_KEYS = frozenset({
+    "mrope_config",
+    "mm_contiguous_spans",
+    "special_token_offsets",
+    "layout_metadata",
+    "item_types",
+})
+
+
+def _check_mm_spans_present(py_multimodal_data: Optional[dict]) -> None:
+    """Raise ValueError if vision data is present but mm_contiguous_spans is missing.
+
+    This mirrors the fail-fast in ad_executor.py:662-668.  The discriminator
+    uses ``_MM_METADATA_ONLY_KEYS``: if every key in the dict belongs to that
+    set then the request carries only metadata (e.g. mrope position encoding)
+    and no vision tokens — no spans required.
+    """
+    if not py_multimodal_data:
+        return
+    if "mm_contiguous_spans" in py_multimodal_data:
+        return
+    vision_keys = set(py_multimodal_data.keys()) - _MM_METADATA_ONLY_KEYS
+    if vision_keys:
+        raise ValueError(
+            f"Request has multimodal data keys {vision_keys} but no "
+            "mm_contiguous_spans in py_multimodal_data. This field is "
+            "required for correct chunked-prefill accounting and must "
+            "be set by the input processor (see registry.py).")
+
 
 class ModelEngine(ABC):
 
@@ -2303,7 +2336,8 @@ class PyTorchModelEngine(ModelEngine):
             num_cached_tokens_per_seq.append(past_seen_token_num)
             request.cached_tokens = num_cached_tokens_per_seq[-1]
 
-            # Multimodal
+            # Multimodal — fail-fast if vision data present but spans missing
+            _check_mm_spans_present(request.py_multimodal_data)
             mm_spans = request.py_multimodal_data.get(
                 'mm_contiguous_spans') if request.py_multimodal_data else None
             py_multimodal_runtime = MultimodalRuntimeData(

@@ -816,6 +816,106 @@ def find_mm_token_lengths(mm_data: Dict[str, Any],
     return num_mm_tokens  # flatten all mm instances to a single list
 
 
+def find_contiguous_mm_spans(
+    input_ids: Union[torch.Tensor, List[int], np.ndarray],
+    vocab_size: Optional[int] = None,
+    mm_token_ids: Optional[torch.Tensor] = None,
+    mm_special_token_ids: Optional[torch.Tensor] = None,
+) -> Tuple[List[Tuple[int, int]], List[int]]:
+    """Scan input_ids for contiguous runs of multimodal tokens.
+
+    Lightweight alternative to find_mm_token_positions that does not require
+    num_mm_tokens.  Suitable for any code path that has token IDs and needs
+    to know where contiguous blocks of MM tokens sit in the sequence.
+
+    At least one of vocab_size or mm_token_ids must be provided.
+    If mm_token_ids is provided, vocab_size is ignored.
+
+    Args:
+        input_ids: Token sequence (tensor, list, or numpy array).
+        vocab_size: Vocabulary size; tokens >= vocab_size are considered MM.
+        mm_token_ids: Explicit token IDs that represent multimodal tokens.
+        mm_special_token_ids: Token IDs for special MM tokens (e.g. image_break).
+
+    Returns:
+        A 2-tuple of:
+        - contiguous_spans: List of (start_position, length) for each contiguous
+            run of MM tokens in input_ids.
+        - special_token_offsets: Indices into the flat list of all MM token
+            positions where special tokens occur.
+    """
+    if mm_token_ids is None and vocab_size is None:
+        raise ValueError(
+            "Provide either mm_token_ids or vocab_size to find multimodal token positions"
+        )
+    if mm_token_ids is not None and vocab_size is not None:
+        logger.debug(
+            "Both mm_token_ids and vocab_size are provided, using mm_token_ids and ignoring vocab_size"
+        )
+
+    # Convert input_ids to tensor if needed
+    if not isinstance(input_ids, torch.Tensor):
+        if isinstance(input_ids, list):
+            input_ids = torch.tensor(input_ids)
+        elif isinstance(input_ids, np.ndarray):
+            input_ids = torch.from_numpy(input_ids)
+
+    # Handle empty input
+    if input_ids.numel() == 0:
+        return [], []
+
+    # Create mask for multimodal tokens including special tokens if provided
+    if mm_token_ids is None:
+        mm_mask = input_ids >= vocab_size
+        if mm_special_token_ids is not None:
+            mm_special_token_ids = mm_special_token_ids.to(
+                device=input_ids.device, dtype=input_ids.dtype)
+            mm_mask = mm_mask | torch.isin(input_ids, mm_special_token_ids)
+    else:
+        mm_token_ids = mm_token_ids.to(device=input_ids.device,
+                                       dtype=input_ids.dtype)
+        if mm_token_ids.ndim != 1:
+            raise ValueError("mm_token_ids must be a 1D tensor")
+        if mm_special_token_ids is not None:
+            mm_special_token_ids = mm_special_token_ids.to(
+                device=input_ids.device, dtype=input_ids.dtype)
+            mm_token_ids = torch.unique(
+                torch.cat([mm_token_ids, mm_special_token_ids]))
+        else:
+            mm_token_ids = torch.unique(mm_token_ids)
+        mm_mask = torch.isin(input_ids, mm_token_ids)
+
+    # If no multimodal tokens found, return empty
+    if not torch.any(mm_mask):
+        return [], []
+
+    # Get positions of all multimodal tokens
+    mm_positions = torch.where(mm_mask)[0].tolist()
+
+    # Identify special token offsets within the flat mm_positions list
+    special_token_offsets: List[int] = []
+    if mm_special_token_ids is not None:
+        mm_token_values = input_ids[mm_positions]
+        special_mask = torch.isin(mm_token_values, mm_special_token_ids)
+        special_token_offsets = torch.where(special_mask)[0].tolist()
+
+    # Compress flat mm_positions into contiguous spans: (start, length)
+    contiguous_spans: List[Tuple[int, int]] = []
+    if mm_positions:
+        span_start = mm_positions[0]
+        span_len = 1
+        for i in range(1, len(mm_positions)):
+            if mm_positions[i] == mm_positions[i - 1] + 1:
+                span_len += 1
+            else:
+                contiguous_spans.append((span_start, span_len))
+                span_start = mm_positions[i]
+                span_len = 1
+        contiguous_spans.append((span_start, span_len))
+
+    return contiguous_spans, special_token_offsets
+
+
 def find_mm_token_positions(
     input_ids: Union[torch.Tensor, List[int], np.ndarray],
     num_mm_tokens: List[int],
@@ -851,49 +951,24 @@ def find_mm_token_positions(
             counting during chunked prefill. A single logical unit may produce
             multiple contiguous spans when its tokens are non-contiguous.
     """
-    if mm_token_ids is None and vocab_size is None:
-        raise ValueError(
-            "Provide either mm_token_ids or vocab_size to find multimodal token positions"
-        )
-    if mm_token_ids is not None and vocab_size is not None:
-        logger.debug(
-            "Both mm_token_ids and vocab_size are provided, using mm_token_ids and ignoring vocab_size"
-        )
+    # Delegate mask creation, position scanning, span compression, and
+    # special-token detection to the lighter find_contiguous_mm_spans.
+    contiguous_spans, start_special_token_positions = find_contiguous_mm_spans(
+        input_ids=input_ids,
+        vocab_size=vocab_size,
+        mm_token_ids=mm_token_ids,
+        mm_special_token_ids=mm_special_token_ids,
+    )
 
-    # Convert input_ids to tensor if needed
-    if not isinstance(input_ids, torch.Tensor):
-        if isinstance(input_ids, list):
-            input_ids = torch.tensor(input_ids)
-        elif isinstance(input_ids, np.ndarray):
-            input_ids = torch.from_numpy(input_ids)
-
-    # Create mask for multimodal tokens including special tokens if provided
-    if mm_token_ids is None:
-        mm_mask = input_ids >= vocab_size
-        if mm_special_token_ids is not None:
-            mm_special_token_ids = mm_special_token_ids.to(
-                device=input_ids.device, dtype=input_ids.dtype)
-            mm_mask = mm_mask | torch.isin(input_ids, mm_special_token_ids)
-    else:
-        mm_token_ids = mm_token_ids.to(device=input_ids.device,
-                                       dtype=input_ids.dtype)
-        if mm_token_ids.ndim != 1:
-            raise ValueError("mm_token_ids must be a 1D tensor")
-        if mm_special_token_ids is not None:
-            mm_special_token_ids = mm_special_token_ids.to(
-                device=input_ids.device, dtype=input_ids.dtype)
-            mm_token_ids = torch.unique(
-                torch.cat([mm_token_ids, mm_special_token_ids]))
-        else:
-            mm_token_ids = torch.unique(mm_token_ids)
-        mm_mask = torch.isin(input_ids, mm_token_ids)
-
-    # If no multimodal tokens found, return empty lists matching the 3-tuple signature
-    if not torch.any(mm_mask):
+    if not contiguous_spans:
         return [], [], []
 
-    # Get positions of all multimodal tokens
-    mm_positions = torch.where(mm_mask)[0].tolist()
+    # Reconstruct flat mm_positions from contiguous_spans for validation
+    # and per-logical-unit start_positions computation.
+    mm_positions: List[int] = []
+    for span_start, span_len in contiguous_spans:
+        mm_positions.extend(range(span_start, span_start + span_len))
+
     assert len(mm_positions) == sum(
         num_mm_tokens
     ), f"Number of multimodal tokens does not match sum of all lengths"
@@ -901,33 +976,10 @@ def find_mm_token_positions(
     # Use num_mm_tokens to find the starting position of each logical unit
     start_positions = []
     current_position = 0
-
     for length in num_mm_tokens:
         if current_position < len(mm_positions):
             start_positions.append(mm_positions[current_position])
             current_position += length
-
-    start_special_token_positions = []
-    if mm_special_token_ids is not None:
-        mm_token_ids = input_ids[mm_positions]
-        special_token_mask_in_mm = torch.isin(mm_token_ids,
-                                              mm_special_token_ids)
-        start_special_token_positions = torch.where(
-            special_token_mask_in_mm)[0].tolist()
-
-    # Compress flat mm_positions into contiguous spans: (start, length)
-    contiguous_spans: List[Tuple[int, int]] = []
-    if mm_positions:
-        span_start = mm_positions[0]
-        span_len = 1
-        for i in range(1, len(mm_positions)):
-            if mm_positions[i] == mm_positions[i - 1] + 1:
-                span_len += 1
-            else:
-                contiguous_spans.append((span_start, span_len))
-                span_start = mm_positions[i]
-                span_len = 1
-        contiguous_spans.append((span_start, span_len))
 
     return start_positions, start_special_token_positions, contiguous_spans
 

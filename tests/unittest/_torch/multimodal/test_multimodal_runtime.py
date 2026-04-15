@@ -6,9 +6,12 @@ import torch
 
 from tensorrt_llm._torch.models.modeling_multimodal_utils import (
     find_input_mm_embeds, get_multimodal_embeddings)
+from tensorrt_llm._torch.pyexecutor.model_engine import _check_mm_spans_present
 from tensorrt_llm.inputs.multimodal import (MultimodalParams,
                                             MultimodalRuntimeData,
+                                            find_contiguous_mm_spans,
                                             find_mm_token_positions)
+from tensorrt_llm.inputs.registry import compute_mm_contiguous_spans_if_absent
 
 
 class TestMultimodalRuntimeData:
@@ -68,11 +71,12 @@ class TestMultimodalRuntimeData:
 
     def test_chunk_boundary_case2(self):
         """Test chunk end is very large."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=30,
-            mm_contiguous_spans=[(0, 3), (5, 4), (10, 5), (15, 6), (25, 7), (35, 8)],
-            chunk_end_pos=100,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=30,
+                                        mm_contiguous_spans=[(0, 3), (5, 4),
+                                                             (10, 5), (15, 6),
+                                                             (25, 7), (35, 8)],
+                                        chunk_end_pos=100,
+                                        special_token_offsets=[])
 
         expected_cached = 3 + 4 + 5 + 6 + 5  # 23 tokens
         expected_current_chunk = 2 + 8  # 10 tokens
@@ -101,7 +105,8 @@ class TestMultimodalRuntimeData:
         with pytest.raises(ValueError,
                            match="All span positions must be non-negative"):
             MultimodalRuntimeData(past_seen_token_num=10,
-                                  mm_contiguous_spans=[(0, 5), (-5, 8), (10, 7)],
+                                  mm_contiguous_spans=[(0, 5), (-5, 8),
+                                                       (10, 7)],
                                   chunk_end_pos=20,
                                   special_token_offsets=[])
 
@@ -110,11 +115,12 @@ class TestMultimodalRuntimeData:
         Video with 3 temporal groups of 196 tokens, separated by 8-token text gaps.
         Layout: text[0,10) group1[10,206) text[206,214) group2[214,410) text[410,418) group3[418,614)
         Chunk [0, 256) should contain 196 + 42 = 238 MM tokens."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=0,
-            mm_contiguous_spans=[(10, 196), (214, 196), (418, 196)],
-            chunk_end_pos=256,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=0,
+                                        mm_contiguous_spans=[(10, 196),
+                                                             (214, 196),
+                                                             (418, 196)],
+                                        chunk_end_pos=256,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 238
@@ -131,11 +137,10 @@ class TestNonContiguousMultimodalRuntimeData:
     def test_two_images_separated_by_text_chunk_spans_both(self):
         """Two images at positions [5,15) and [30,40) with text gap at [15,30).
         Chunk [0, 50) covers everything."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=0,
-            mm_contiguous_spans=[(5, 10), (30, 10)],
-            chunk_end_pos=50,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=0,
+                                        mm_contiguous_spans=[(5, 10), (30, 10)],
+                                        chunk_end_pos=50,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 20  # both full regions
@@ -143,11 +148,10 @@ class TestNonContiguousMultimodalRuntimeData:
     def test_two_images_separated_chunk_in_text_gap(self):
         """Chunk [15, 30) lands entirely in the text gap between two images.
         Images at [5,15) and [30,40). No MM tokens in chunk."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=15,
-            mm_contiguous_spans=[(5, 10), (30, 10)],
-            chunk_end_pos=30,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=15,
+                                        mm_contiguous_spans=[(5, 10), (30, 10)],
+                                        chunk_end_pos=30,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 10  # first image fully cached
         assert runtime.num_mm_tokens_in_chunk == 0  # gap has no MM tokens
@@ -155,11 +159,10 @@ class TestNonContiguousMultimodalRuntimeData:
     def test_two_images_separated_chunk_hits_second_only(self):
         """Chunk [25, 45) starts in the gap and covers the second image.
         Images at [5,15) and [30,40)."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=25,
-            mm_contiguous_spans=[(5, 10), (30, 10)],
-            chunk_end_pos=45,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=25,
+                                        mm_contiguous_spans=[(5, 10), (30, 10)],
+                                        chunk_end_pos=45,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 10  # first image fully cached
         assert runtime.num_mm_tokens_in_chunk == 10  # second image fully in chunk
@@ -167,22 +170,21 @@ class TestNonContiguousMultimodalRuntimeData:
     def test_two_images_separated_chunk_straddles_second(self):
         """Chunk [25, 35) starts in gap, partially covers second image.
         Images at [5,15) and [30,40)."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=25,
-            mm_contiguous_spans=[(5, 10), (30, 10)],
-            chunk_end_pos=35,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=25,
+                                        mm_contiguous_spans=[(5, 10), (30, 10)],
+                                        chunk_end_pos=35,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 10  # first image fully cached
         assert runtime.num_mm_tokens_in_chunk == 5  # 5 tokens of second image [30,35)
 
     def test_three_images_chunk_hits_middle_only(self):
         """Three images at [5,15), [30,40), [60,70). Chunk [25, 45) hits middle only."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=25,
-            mm_contiguous_spans=[(5, 10), (30, 10), (60, 10)],
-            chunk_end_pos=45,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=25,
+                                        mm_contiguous_spans=[(5, 10), (30, 10),
+                                                             (60, 10)],
+                                        chunk_end_pos=45,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 10  # first image cached
         assert runtime.num_mm_tokens_in_chunk == 10  # second image fully in chunk
@@ -190,11 +192,11 @@ class TestNonContiguousMultimodalRuntimeData:
     def test_three_images_chunk_partial_first_full_second_miss_third(self):
         """Three images at [5,15), [30,40), [60,70). Chunk [10, 45).
         First image partial (5 tokens cached, 5 in chunk), second full in chunk, third missed."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=10,
-            mm_contiguous_spans=[(5, 10), (30, 10), (60, 10)],
-            chunk_end_pos=45,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=10,
+                                        mm_contiguous_spans=[(5, 10), (30, 10),
+                                                             (60, 10)],
+                                        chunk_end_pos=45,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 5  # [5,10) of first image cached
         assert runtime.num_mm_tokens_in_chunk == 15  # 5 from first + 10 from second
@@ -203,11 +205,11 @@ class TestNonContiguousMultimodalRuntimeData:
         """Simulate Qwen3-VL timestamp-separated frames:
         text[0,10) frame1[10,30) text[30,35) frame2[35,55) text[55,60) frame3[60,80)
         Chunk [30, 60) should get: 0 from frame1 (cached), full frame2, 0 from frame3."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=30,
-            mm_contiguous_spans=[(10, 20), (35, 20), (60, 20)],
-            chunk_end_pos=60,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=30,
+                                        mm_contiguous_spans=[(10, 20), (35, 20),
+                                                             (60, 20)],
+                                        chunk_end_pos=60,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 20  # frame1 fully cached
         assert runtime.num_mm_tokens_in_chunk == 20  # frame2 fully in chunk [35,55)
@@ -215,11 +217,11 @@ class TestNonContiguousMultimodalRuntimeData:
     def test_scattered_frames_chunk_straddles_gap_and_frame(self):
         """Frames at [10,30) and [50,70). Chunk [25, 55).
         Partial first frame (5 tokens [25,30)), then gap [30,50), then partial second (5 tokens [50,55))."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=25,
-            mm_contiguous_spans=[(10, 20), (50, 20)],
-            chunk_end_pos=55,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=25,
+                                        mm_contiguous_spans=[(10, 20),
+                                                             (50, 20)],
+                                        chunk_end_pos=55,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 15  # [10,25) of first frame cached
         assert runtime.num_mm_tokens_in_chunk == 10  # 5 from first [25,30) + 5 from second [50,55)
@@ -227,11 +229,10 @@ class TestNonContiguousMultimodalRuntimeData:
     def test_large_gap_between_images(self):
         """Images at [5,10) and [500,505) with a huge text gap.
         Chunk [0, 100). First image fully in chunk, second not reached."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=0,
-            mm_contiguous_spans=[(5, 5), (500, 5)],
-            chunk_end_pos=100,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=0,
+                                        mm_contiguous_spans=[(5, 5), (500, 5)],
+                                        chunk_end_pos=100,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 5  # only first image
@@ -251,22 +252,24 @@ class TestNonContiguousWithContiguousSpans:
         Group1: [10, 206), Gap: [206, 214), Group2: [214, 410), Gap: [410, 418), Group3: [418, 614)
         Total MM tokens: 588. Chunk [0, 256) should contain 196 + 42 = 238 MM tokens.
         """
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=0,
-            mm_contiguous_spans=[(10, 196), (214, 196), (418, 196)],
-            chunk_end_pos=256,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=0,
+                                        mm_contiguous_spans=[(10, 196),
+                                                             (214, 196),
+                                                             (418, 196)],
+                                        chunk_end_pos=256,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 238
 
     def test_video_three_groups_chunk_in_middle(self):
         """Same video, chunk [256, 512). past_seen=256."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=256,
-            mm_contiguous_spans=[(10, 196), (214, 196), (418, 196)],
-            chunk_end_pos=512,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=256,
+                                        mm_contiguous_spans=[(10, 196),
+                                                             (214, 196),
+                                                             (418, 196)],
+                                        chunk_end_pos=512,
+                                        special_token_offsets=[])
 
         # Cached: 196 (group1) + 42 (group2 partial [214,256)) = 238
         # In chunk: 154 (group2 remainder [256,410)) + 94 (group3 partial [418,512)) = 248
@@ -275,11 +278,12 @@ class TestNonContiguousWithContiguousSpans:
 
     def test_video_three_groups_last_chunk(self):
         """Same video, chunk [512, 627). past_seen=512."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=512,
-            mm_contiguous_spans=[(10, 196), (214, 196), (418, 196)],
-            chunk_end_pos=627,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=512,
+                                        mm_contiguous_spans=[(10, 196),
+                                                             (214, 196),
+                                                             (418, 196)],
+                                        chunk_end_pos=627,
+                                        special_token_offsets=[])
 
         # Cached: 196 + 196 + 94 = 486
         # In chunk: 102 (group3 remainder [512,614))
@@ -288,33 +292,32 @@ class TestNonContiguousWithContiguousSpans:
 
     def test_single_span_matches_contiguous(self):
         """When MM tokens are contiguous, a single span behaves identically."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=50,
-            mm_contiguous_spans=[(10, 100)],
-            chunk_end_pos=80,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=50,
+                                        mm_contiguous_spans=[(10, 100)],
+                                        chunk_end_pos=80,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 40  # [10,50)
         assert runtime.num_mm_tokens_in_chunk == 30  # [50,80)
 
     def test_all_cached_with_spans(self):
         """All MM tokens cached."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=700,
-            mm_contiguous_spans=[(10, 196), (214, 196)],
-            chunk_end_pos=800,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=700,
+                                        mm_contiguous_spans=[(10, 196),
+                                                             (214, 196)],
+                                        chunk_end_pos=800,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 392
         assert runtime.num_mm_tokens_in_chunk == 0
 
     def test_chunk_in_text_gap(self):
         """Chunk falls entirely in a text gap between groups."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=60,
-            mm_contiguous_spans=[(10, 50), (200, 50)],
-            chunk_end_pos=200,
-            special_token_offsets=[])
+        runtime = MultimodalRuntimeData(past_seen_token_num=60,
+                                        mm_contiguous_spans=[(10, 50),
+                                                             (200, 50)],
+                                        chunk_end_pos=200,
+                                        special_token_offsets=[])
 
         assert runtime.num_unseen_mm_tokens == 50  # group1 fully cached
         assert runtime.num_mm_tokens_in_chunk == 0  # gap has no MM tokens
@@ -582,8 +585,9 @@ class TestFindInputMmEmbed:
         """
         mm_embeds = [torch.randn(30, 512)]
         multimodal_params = [
-            self.create_multimodal_params(5, 5, [10]),   # 5 cached, 5 in chunk
-            self.create_multimodal_params(10, 0, [10, 10]),  # 10 cached, 0 in chunk (gap)
+            self.create_multimodal_params(5, 5, [10]),  # 5 cached, 5 in chunk
+            self.create_multimodal_params(
+                10, 0, [10, 10]),  # 10 cached, 0 in chunk (gap)
         ]
 
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
@@ -605,9 +609,14 @@ class TestFindInputMmEmbed:
             torch.randn(20, 512),  # Request 3: 20 tokens (two regions of 10)
         ]
         multimodal_params = [
-            self.create_multimodal_params(10, 10, [10, 10]),  # 10 cached (first region), 10 in chunk (second region)
-            self.create_multimodal_params(0, 15, [15]),       # nothing cached, all in chunk
-            self.create_multimodal_params(20, 0, [10, 10]),   # all cached, nothing in chunk
+            self.create_multimodal_params(
+                10, 10,
+                [10, 10
+                 ]),  # 10 cached (first region), 10 in chunk (second region)
+            self.create_multimodal_params(0, 15,
+                                          [15]),  # nothing cached, all in chunk
+            self.create_multimodal_params(
+                20, 0, [10, 10]),  # all cached, nothing in chunk
         ]
 
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
@@ -615,7 +624,7 @@ class TestFindInputMmEmbed:
         assert len(result) == 3
         assert result[0].shape == (10, 512)  # second region of request 1
         assert result[1].shape == (15, 512)  # all of request 2
-        assert result[2].shape == (0, 512)   # nothing from request 3
+        assert result[2].shape == (0, 512)  # nothing from request 3
 
         torch.testing.assert_close(result[0], mm_embeds[0][10:20])
         torch.testing.assert_close(result[1], mm_embeds[1][0:15])
@@ -1223,6 +1232,236 @@ class TestMultimodalRuntimeDataPreset:
         )
         # Should compute num_mm_tokens_in_chunk from spans
         assert runtime.num_mm_tokens_in_chunk == 3  # positions 5..8
+
+
+class TestCheckMmSpansPresent:
+    """Test cases for _check_mm_spans_present — the fail-fast discriminator."""
+
+    def test_none_mm_data_no_raise(self):
+        """None py_multimodal_data is fine — no multimodal content."""
+        _check_mm_spans_present(None)  # should not raise
+
+    def test_mrope_only_no_raise(self):
+        """mrope-only metadata dict should NOT trigger fail-fast."""
+        mm_data = {"mrope_config": {"mrope_position_ids": torch.zeros(3, 1, 5)}}
+        _check_mm_spans_present(mm_data)  # should not raise
+
+    def test_spans_present_no_raise(self):
+        """When mm_contiguous_spans is present, no error regardless of other keys."""
+        mm_data = {
+            "multimodal_embedding": torch.zeros(5, 10),
+            "mm_contiguous_spans": [(0, 5)],
+        }
+        _check_mm_spans_present(mm_data)  # should not raise
+
+    def test_vision_data_without_spans_raises(self):
+        """Vision data present but mm_contiguous_spans missing — must raise."""
+        mm_data = {"multimodal_embedding": torch.zeros(5, 10)}
+        with pytest.raises(ValueError, match="mm_contiguous_spans"):
+            _check_mm_spans_present(mm_data)
+
+    def test_pixel_values_without_spans_raises(self):
+        """Pixel values present but mm_contiguous_spans missing — must raise."""
+        mm_data = {"image": {"pixel_values": torch.zeros(1, 3, 224, 224)}}
+        with pytest.raises(ValueError, match="mm_contiguous_spans"):
+            _check_mm_spans_present(mm_data)
+
+    def test_metadata_only_keys_no_raise(self):
+        """All metadata-only keys, no vision content — should not raise."""
+        mm_data = {
+            "mrope_config": {},
+            "special_token_offsets": [1, 2],
+            "layout_metadata": {},
+            "item_types": ["image"],
+        }
+        _check_mm_spans_present(mm_data)  # should not raise
+
+    def test_empty_dict_no_raise(self):
+        """Empty py_multimodal_data should not raise."""
+        _check_mm_spans_present({})  # should not raise
+
+
+class _MockProcessor:
+    """Minimal mock of BaseMultimodalInputProcessor for compute_mm_contiguous_spans_if_absent tests."""
+
+    def __init__(self,
+                 vocab_size=100,
+                 mm_token_ids=None,
+                 mm_special_token_ids=None):
+        self._vocab_size = vocab_size
+        self._mm_token_ids = mm_token_ids
+        self._mm_special_token_ids = mm_special_token_ids
+
+    def get_vocab_size(self):
+        return self._vocab_size
+
+    def get_mm_token_ids(self):
+        return self._mm_token_ids
+
+    def get_mm_special_token_ids(self):
+        return self._mm_special_token_ids
+
+
+class TestEnsureMmContiguousSpans:
+    """Test cases for compute_mm_contiguous_spans_if_absent — the idempotent post-processing helper."""
+
+    def test_none_extra_is_noop(self):
+        """No crash when extra_processed_inputs is None."""
+        compute_mm_contiguous_spans_if_absent([1, 2, 3], None, _MockProcessor())
+
+    def test_no_multimodal_data_key_is_noop(self):
+        """No crash when multimodal_data key is absent."""
+        extra = {"some_other_key": {}}
+        compute_mm_contiguous_spans_if_absent([1, 2, 3], extra,
+                                              _MockProcessor())
+        assert "mm_contiguous_spans" not in extra
+
+    def test_already_present_is_idempotent(self):
+        """Existing spans are NOT overwritten."""
+        original_spans = [(0, 5)]
+        extra = {"multimodal_data": {"mm_contiguous_spans": original_spans}}
+        compute_mm_contiguous_spans_if_absent([100, 101, 102, 103, 104], extra,
+                                              _MockProcessor(vocab_size=100))
+        assert extra["multimodal_data"]["mm_contiguous_spans"] is original_spans
+
+    def test_computes_spans_when_absent(self):
+        """Spans computed from token IDs when not already present."""
+        extra = {"multimodal_data": {"multimodal_embedding": "placeholder"}}
+        compute_mm_contiguous_spans_if_absent([1, 100, 101, 2, 102], extra,
+                                              _MockProcessor(vocab_size=100))
+        assert extra["multimodal_data"]["mm_contiguous_spans"] == [(1, 2),
+                                                                   (4, 1)]
+
+    def test_no_mm_tokens_stores_empty(self):
+        """When no MM tokens found, stores empty list (not None)."""
+        extra = {"multimodal_data": {"some_key": "value"}}
+        compute_mm_contiguous_spans_if_absent([1, 2, 3], extra,
+                                              _MockProcessor(vocab_size=100))
+        assert extra["multimodal_data"]["mm_contiguous_spans"] == []
+
+    def test_stores_special_token_offsets(self):
+        """Special token offsets stored when mm_special_token_ids provided."""
+        proc = _MockProcessor(vocab_size=None,
+                              mm_token_ids=torch.tensor([50]),
+                              mm_special_token_ids=torch.tensor([60]))
+        extra = {"multimodal_data": {"embed": "x"}}
+        # input: [1, 50, 60, 50, 2] → mm positions [1,2,3], special at index 1
+        compute_mm_contiguous_spans_if_absent([1, 50, 60, 50, 2], extra, proc)
+        assert extra["multimodal_data"]["special_token_offsets"] == [1]
+
+    def test_no_vocab_and_no_mm_ids_is_noop(self):
+        """When processor provides neither vocab_size nor mm_token_ids, no crash."""
+        proc = _MockProcessor(vocab_size=None, mm_token_ids=None)
+        extra = {"multimodal_data": {"embed": "x"}}
+        compute_mm_contiguous_spans_if_absent([100, 101], extra, proc)
+        # Should not have set spans since we can't identify MM tokens
+        assert "mm_contiguous_spans" not in extra["multimodal_data"]
+
+
+class TestFindContiguousMmSpans:
+    """Test cases for find_contiguous_mm_spans — the lightweight span scanner
+    that does NOT require num_mm_tokens."""
+
+    def test_no_mm_tokens_returns_empty(self):
+        """Input with no MM tokens returns empty spans and offsets."""
+        spans, offsets = find_contiguous_mm_spans(
+            input_ids=[1, 2, 3, 4, 5],
+            vocab_size=100,
+        )
+        assert spans == []
+        assert offsets == []
+
+    def test_single_contiguous_run_vocab_size(self):
+        """Single contiguous run detected via vocab_size threshold."""
+        spans, offsets = find_contiguous_mm_spans(
+            input_ids=[1, 100, 101, 2],
+            vocab_size=100,
+        )
+        assert spans == [(1, 2)]
+        assert offsets == []
+
+    def test_two_runs_separated_by_text(self):
+        """Two contiguous runs separated by text tokens."""
+        spans, offsets = find_contiguous_mm_spans(
+            input_ids=[100, 101, 5, 102, 103],
+            vocab_size=100,
+        )
+        assert spans == [(0, 2), (3, 2)]
+        assert offsets == []
+
+    def test_with_mm_token_ids(self):
+        """MM tokens identified by explicit token IDs instead of vocab_size."""
+        spans, offsets = find_contiguous_mm_spans(
+            input_ids=[1, 50, 50, 2, 50, 3],
+            mm_token_ids=torch.tensor([50]),
+        )
+        assert spans == [(1, 2), (4, 1)]
+        assert offsets == []
+
+    def test_with_special_tokens(self):
+        """Special tokens included in mask and reported as offsets."""
+        # Token 5 = MM, Token 6 = special (image_break)
+        spans, offsets = find_contiguous_mm_spans(
+            input_ids=[1, 5, 5, 6, 5, 2],
+            mm_token_ids=torch.tensor([5]),
+            mm_special_token_ids=torch.tensor([6]),
+        )
+        # All 4 tokens [1..4] are contiguous (5,5,6,5 — special 6 is also MM)
+        assert spans == [(1, 4)]
+        # In the flat mm_positions [1,2,3,4], index 2 is the special token (value 6)
+        assert offsets == [2]
+
+    def test_tensor_input(self):
+        """Accepts torch.Tensor input_ids."""
+        spans, offsets = find_contiguous_mm_spans(
+            input_ids=torch.tensor([1, 100, 101, 2]),
+            vocab_size=100,
+        )
+        assert spans == [(1, 2)]
+
+    def test_numpy_input(self):
+        """Accepts numpy array input_ids."""
+        import numpy as np
+        spans, offsets = find_contiguous_mm_spans(
+            input_ids=np.array([1, 100, 101, 2]),
+            vocab_size=100,
+        )
+        assert spans == [(1, 2)]
+
+    def test_raises_without_vocab_size_or_mm_token_ids(self):
+        """Should raise ValueError when neither vocab_size nor mm_token_ids provided."""
+        with pytest.raises(ValueError,
+                           match="Provide either mm_token_ids or vocab_size"):
+            find_contiguous_mm_spans(input_ids=[1, 2, 3])
+
+    def test_empty_input_ids(self):
+        """Empty input returns empty spans."""
+        spans, offsets = find_contiguous_mm_spans(
+            input_ids=[],
+            vocab_size=100,
+        )
+        assert spans == []
+        assert offsets == []
+
+    def test_all_mm_tokens(self):
+        """All tokens are MM — single span covering entire input."""
+        spans, offsets = find_contiguous_mm_spans(
+            input_ids=[100, 101, 102],
+            vocab_size=100,
+        )
+        assert spans == [(0, 3)]
+
+    def test_multiple_special_tokens(self):
+        """Multiple special tokens at different positions."""
+        # 5=MM, 6=special, 7=special
+        spans, offsets = find_contiguous_mm_spans(
+            input_ids=[1, 5, 6, 5, 7, 2],
+            mm_token_ids=torch.tensor([5]),
+            mm_special_token_ids=torch.tensor([6, 7]),
+        )
+        assert spans == [(1, 4)]
+        # flat mm_positions: [1,2,3,4] → index 1 is token 6, index 3 is token 7
+        assert offsets == [1, 3]
 
 
 if __name__ == "__main__":
