@@ -5,8 +5,9 @@ from .multimodal import MultimodalInput
 from .registry import (BaseMultimodalDummyInputsBuilder,
                        BaseMultimodalInputProcessor, ExtraProcessedInputs,
                        InputProcessor, MultimodalPlaceholderMetadata,
-                       MultimodalPlaceholderPlacement, create_input_processor,
-                       create_input_processor_with_hash,
+                       MultimodalPlaceholderPlacement,
+                       compute_mm_contiguous_spans_if_absent,
+                       create_input_processor, create_input_processor_with_hash,
                        register_input_processor,
                        support_multimodal_disaggregated)
 # yapf and isort conflict on this import block
@@ -40,6 +41,7 @@ __all__ = [
     "InputProcessor",
     "create_input_processor",
     "create_input_processor_with_hash",
+    "compute_mm_contiguous_spans_if_absent",
     "register_input_processor",
     "support_multimodal_disaggregated",
     "ExtraProcessedInputs",
