@@ -370,10 +370,12 @@ class TestModelingMultimodal(unittest.TestCase, ABC):
             position_ids = [torch.arange(0, input_ids.size(-1), dtype=torch.int32)]
             multimodal_runtime = (
                 MultimodalRuntimeData(
-                    mm_token_lengths=multimodal_params_list[0].multimodal_input.multimodal_lengths,
-                    mm_token_positions=multimodal_params_list[
-                        0
-                    ].multimodal_input.multimodal_positions,
+                    mm_contiguous_spans=list(
+                        zip(
+                            multimodal_params_list[0].multimodal_input.multimodal_positions,
+                            multimodal_params_list[0].multimodal_input.multimodal_lengths,
+                        )
+                    ),
                     past_seen_token_num=num_cached_tokens_per_seq[0],
                     chunk_end_pos=num_cached_tokens_per_seq[0] + input_ids.size(-1),
                     special_token_offsets=[],
