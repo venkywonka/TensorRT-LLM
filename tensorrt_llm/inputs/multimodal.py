@@ -963,23 +963,21 @@ def find_mm_token_positions(
     if not contiguous_spans:
         return [], [], []
 
-    # Reconstruct flat mm_positions from contiguous_spans for validation
-    # and per-logical-unit start_positions computation.
-    mm_positions: List[int] = []
-    for span_start, span_len in contiguous_spans:
-        mm_positions.extend(range(span_start, span_start + span_len))
+    # Reconstruct flat mm_positions from contiguous_spans via vectorized arange+cat.
+    spans_t = torch.tensor(contiguous_spans)  # (N, 2) — [start, length]
+    mm_positions = torch.cat(
+        [torch.arange(s, s + n) for s, n in spans_t.tolist()])
 
-    assert len(mm_positions) == sum(
-        num_mm_tokens
-    ), f"Number of multimodal tokens does not match sum of all lengths"
+    # Validate total token count against num_mm_tokens.
+    lengths_t = torch.tensor(num_mm_tokens)
+    assert mm_positions.numel() == lengths_t.sum().item(), \
+        "Number of multimodal tokens does not match sum of all lengths"
 
-    # Use num_mm_tokens to find the starting position of each logical unit
-    start_positions = []
-    current_position = 0
-    for length in num_mm_tokens:
-        if current_position < len(mm_positions):
-            start_positions.append(mm_positions[current_position])
-            current_position += length
+    # Gather start_positions at cumsum offsets (exclusive prefix sum).
+    offsets = torch.zeros(len(num_mm_tokens), dtype=torch.long)
+    if len(num_mm_tokens) > 1:
+        torch.cumsum(lengths_t[:-1], dim=0, out=offsets[1:])
+    start_positions = mm_positions[offsets].tolist()
 
     return start_positions, start_special_token_positions, contiguous_spans
 
