@@ -838,6 +838,7 @@ def create_input_processor_with_hash(
             sampling_params,
             precomputed_token_ids=expanded_ids,
             precomputed_extra=extra_processed_inputs,
+            precomputed_num_mm_tokens=num_mm_tokens,
         )
 
     def multimodal_hashing_process(
@@ -846,6 +847,7 @@ def create_input_processor_with_hash(
         *,
         precomputed_token_ids: Optional[List[int]] = None,
         precomputed_extra: Optional[ExtraProcessedInputs] = None,
+        precomputed_num_mm_tokens: Optional[List[int]] = None,
     ) -> Tuple[List[int], Optional[ExtraProcessedInputs]]:
         """
         Process multimodal hashing for media tokens if possible.
@@ -853,6 +855,10 @@ def create_input_processor_with_hash(
         precomputed_token_ids and precomputed_extra must be provided together or
         both be None. When both are provided (tokenized+MM path), skips the
         input_processor call and uses them; when both are None, calls input_processor.
+
+        precomputed_num_mm_tokens is optional and independent: if provided, skips
+        the otherwise-duplicate find_mm_token_lengths call (the tokenized+MM path
+        already computes it upstream to expand the prompt).
 
         Supports optional user-provided UUIDs via 'multi_modal_uuids' in inputs.
         When a UUID is provided for a logical multimodal unit, it will be used as the
@@ -877,9 +883,15 @@ def create_input_processor_with_hash(
                 "precomputed_token_ids and precomputed_extra must be provided "
                 "together or both be None; got one without the other.")
 
-        num_mm_tokens = find_mm_token_lengths(mm_data, input_processor)
-        # TODO: here we assume there is only one modality for now
-        num_mm_tokens = next(iter(num_mm_tokens.values()))
+        if precomputed_num_mm_tokens is not None:
+            num_mm_tokens = precomputed_num_mm_tokens
+        else:
+            # TODO: here we assume there is only one modality for now
+            num_mm_tokens_by_key = find_mm_token_lengths(
+                mm_data, input_processor)
+            if not num_mm_tokens_by_key:
+                return [], None
+            num_mm_tokens = next(iter(num_mm_tokens_by_key.values()))
         if len(num_mm_tokens) <= 0:
             return [], None
 
