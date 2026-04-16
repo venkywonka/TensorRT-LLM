@@ -591,6 +591,11 @@ class BaseLLM:
                     mrope_config[
                         "mrope_position_deltas"] = disaggregated_params.mrope_position_deltas_handle
                     multimodal_data["mrope_config"] = mrope_config
+                # Backfill mm_contiguous_spans so downstream chunked-prefill
+                # logic can slice the pre-computed embeddings correctly.
+                compute_mm_contiguous_spans_if_absent(
+                    prompt_token_ids, {"multimodal_data": multimodal_data},
+                    cast(BaseMultimodalInputProcessor, self.input_processor))
                 multimodal_params = MultimodalParams(
                     multimodal_input=multimodal_input,
                     multimodal_data=multimodal_data,
