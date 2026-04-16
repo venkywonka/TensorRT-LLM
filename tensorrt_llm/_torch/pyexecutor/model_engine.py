@@ -82,15 +82,15 @@ _MM_METADATA_ONLY_KEYS = frozenset({
 
 
 def _check_mm_spans_present(py_multimodal_data: Optional[dict]) -> None:
-    """Raise if vision data present but mm_contiguous_spans missing."""
+    """Raise if multimodal data is present but mm_contiguous_spans is missing."""
     if not py_multimodal_data:
         return
     if py_multimodal_data.get("mm_contiguous_spans") is not None:
         return
-    vision_keys = set(py_multimodal_data.keys()) - _MM_METADATA_ONLY_KEYS
-    if vision_keys:
+    mm_keys = set(py_multimodal_data.keys()) - _MM_METADATA_ONLY_KEYS
+    if mm_keys:
         raise ValueError(
-            f"Request has multimodal data keys {vision_keys} but no "
+            f"Request has multimodal data keys {mm_keys} but no "
             "mm_contiguous_spans in py_multimodal_data.")
 
 
