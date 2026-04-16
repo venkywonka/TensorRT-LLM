@@ -134,7 +134,9 @@ class MultimodalRuntimeData:
         past_seen_token_num: Total tokens already processed in previous iterations (cached)
         mm_contiguous_spans: List of (start_position, token_count) per contiguous MM token run
         chunk_end_pos: End position of the current chunk for chunked prefill
-        special_token_offsets: Indices of special tokens in the flat MM token union
+        special_token_offsets: Sorted indices of special tokens in the flat MM
+            token union. MUST be non-decreasing — ``__post_init__`` uses
+            ``bisect`` for O(log N) cached/in-chunk counting.
 
         num_cached_mm_tokens: Number of MM tokens that are cached (computed)
         num_mm_tokens_in_chunk: Number of MM tokens in the current chunk (computed)
@@ -199,7 +201,9 @@ class MultimodalRuntimeData:
                         self.num_mm_tokens_in_chunk += length
 
         if len(self.special_token_offsets) > 0:
-            # special_token_offsets are sorted indices into the mm token union
+            # Sortedness of special_token_offsets is guaranteed by the sole
+            # producer find_contiguous_mm_spans (torch.where returns sorted
+            # indices), so bisect_left is safe without a runtime check.
             s = self.special_token_offsets
             self.num_cached_special_tokens = bisect.bisect_left(
                 s, self.num_cached_mm_tokens)
@@ -211,12 +215,13 @@ class MultimodalRuntimeData:
             self.total_special_tokens_in_request = len(
                 self.special_token_offsets)
 
-        total = sum(length for _, length in self.mm_contiguous_spans)
-        if self.num_cached_mm_tokens + self.num_mm_tokens_in_chunk + remainder > total:
+        if (self.num_cached_mm_tokens + self.num_mm_tokens_in_chunk + remainder
+                > self.total_mm_tokens_in_request):
             raise ValueError(
                 f"num_cached_mm_tokens ({self.num_cached_mm_tokens}) + "
                 f"num_mm_tokens_in_chunk ({self.num_mm_tokens_in_chunk}) + "
-                f"remainder ({remainder}) must be <= total ({total})")
+                f"remainder ({remainder}) must be <= total "
+                f"({self.total_mm_tokens_in_request})")
 
 
 @dataclass
@@ -735,14 +740,35 @@ def int32_to_hexdigest(int32_values: List[int]) -> str:
     return ''.join(result)
 
 
-def find_mm_token_lengths(mm_data: Dict[str, Any],
-                          input_processor: Any) -> List[int]:
+def find_mm_token_lengths(
+    mm_data: Dict[str, Any],
+    input_processor: Any,
+    *,
+    multimodal_data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, List[int]]:
     """Get the token lengths of each logical multimodal unit.
 
     Returns the total token count for each logical unit (image or video), including any special tokens
     (e.g., image_begin, image_end, image_break) that may be mixed with the actual
     multimodal content tokens. This mm_token_lengths represents the full chunk from beginning
     to end, not just pure image/video/audio tokens.
+
+    For videos, the caller can thread ``multimodal_data`` through so that
+    this function picks up the processor-produced ``video_grid_thw`` tensor
+    (already stored at ``multimodal_data["video"]["video_grid_thw"]`` by the
+    input processor's ``__call__``). When present and shape-matched against
+    the number of videos in ``mm_data``, each row is forwarded per-video to
+    ``input_processor.get_num_tokens_per_video(video=..., video_grid_thw=row)``
+    — the method's pure branch then computes the count directly from the row,
+    without running the HF processor again. This is the production hot path
+    for video token counting and carries no shared mutable state on the
+    input processor (thread-safe by construction).
+
+    On missing ``multimodal_data`` / missing ``video_grid_thw`` / row-count
+    mismatch, this function falls back to calling
+    ``get_num_tokens_per_video(video=...)`` without a ``video_grid_thw``
+    kwarg — defensive fallback rather than hard assert so a misbehaving
+    subclass cannot break inference.
     """
 
     mm_items = {
@@ -751,14 +777,29 @@ def find_mm_token_lengths(mm_data: Dict[str, Any],
     }
     num_mm_tokens = {}
 
+    mm_video_dict = (multimodal_data or {}).get("video") or {}
+    video_grid_thw = mm_video_dict.get("video_grid_thw")
+
     for modality, items in mm_items.items():
         if not hasattr(input_processor, f"get_num_tokens_per_{modality}"):
             raise AttributeError(
                 f"Input processor {type(input_processor).__name__} does not have 'get_num_tokens_per_{modality}' method required for multimodal hashing."
             )
 
+        # Decide whether the fast path can be taken for the video modality.
+        fast_path_vgt = None
+        if modality == "video" and video_grid_thw is not None:
+            if len(video_grid_thw) == len(items):
+                fast_path_vgt = video_grid_thw
+            else:
+                logger.warning(
+                    "find_mm_token_lengths: video_grid_thw row count "
+                    f"({len(video_grid_thw)}) does not match number of "
+                    f"videos in mm_data ({len(items)}); falling back to "
+                    "per-item recompute without video_grid_thw.")
+
         modality_token_lengths = []
-        for item in items:
+        for idx, item in enumerate(items):
             if modality == "image":
                 if isinstance(item, torch.Tensor):
                     item = ToPILImage()(item)
@@ -771,8 +812,11 @@ def find_mm_token_lengths(mm_data: Dict[str, Any],
                 assert isinstance(item, list), "Video must be a list of frames"
                 if isinstance(item[0], torch.Tensor):
                     item = [ToPILImage()(frame) for frame in item]
+                call_kwargs = {"video": item}
+                if fast_path_vgt is not None:
+                    call_kwargs["video_grid_thw"] = fast_path_vgt[idx]
                 num_tokens = input_processor.get_num_tokens_per_video(
-                    video=item, )
+                    **call_kwargs)
                 modality_token_lengths.append(num_tokens)
             elif modality == "audio":
                 num_tokens = input_processor.get_num_tokens_per_audio(
@@ -795,7 +839,7 @@ def find_contiguous_mm_spans(
     """Scan input_ids for contiguous runs of multimodal tokens.
 
     Lightweight alternative to find_mm_token_positions that does not require
-    num_mm_tokens.  Suitable for any code path that has token IDs and needs
+    num_mm_tokens. Suitable for any code path that has token IDs and needs
     to know where contiguous blocks of MM tokens sit in the sequence.
 
     At least one of vocab_size or mm_token_ids must be provided.
@@ -830,7 +874,6 @@ def find_contiguous_mm_spans(
         elif isinstance(input_ids, np.ndarray):
             input_ids = torch.from_numpy(input_ids)
 
-    # Handle empty input
     if input_ids.numel() == 0:
         return [], []
 
@@ -864,10 +907,13 @@ def find_contiguous_mm_spans(
     # Identify special token offsets within the flat mm_positions list
     special_token_offsets: List[int] = []
     if mm_special_token_ids is not None:
-        mm_token_values = input_ids[mm_positions]
-        special_mask = torch.isin(mm_token_values, mm_special_token_ids)
+        tokens_at_mm_positions = input_ids[mm_positions]
+        special_mask = torch.isin(tokens_at_mm_positions, mm_special_token_ids)
         special_token_offsets = torch.where(special_mask)[0].tolist()
 
+    # diffs[i] = mm_positions[i+1] - mm_positions[i]. Where diffs != 1 there is
+    # a gap, so the next contiguous span starts at index (i + 1) in mm_positions
+    # (i.e. gap_indices are indices *into mm_positions*, not 1-based positions).
     diffs = torch.diff(mm_positions)
     gap_indices = torch.where(diffs != 1)[0] + 1
     span_starts_idx = torch.cat([mm_positions.new_zeros(1), gap_indices])
@@ -935,8 +981,10 @@ def find_mm_token_positions(
 
     # Validate total token count against num_mm_tokens.
     lengths_t = torch.tensor(num_mm_tokens)
-    assert mm_positions.numel() == lengths_t.sum().item(), \
-        "Number of multimodal tokens does not match sum of all lengths"
+    assert mm_positions.numel() == lengths_t.sum().item(), (
+        f"Number of multimodal tokens ({mm_positions.numel()}) does not match "
+        f"sum of all lengths ({lengths_t.sum().item()}): "
+        f"num_mm_tokens={num_mm_tokens}, contiguous_spans={contiguous_spans}")
 
     # Gather start_positions at cumsum offsets (exclusive prefix sum).
     offsets = torch.zeros(len(num_mm_tokens), dtype=torch.long)

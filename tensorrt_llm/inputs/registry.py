@@ -299,15 +299,21 @@ class BaseMultimodalInputProcessor(ABC):
         self,
         *,
         video: List[Image.Image],
+        video_grid_thw: Optional["torch.Tensor"] = None,
         **kwargs,
     ):
         """
         Calculate the number of tokens generated for a video.
 
-        This (default) method delegates to the Hugging Face processor's '_get_num_multimodal_tokens' method.
-        Returns the token count for the given video.
+        ``video_grid_thw`` is an optional ``(t, h, w)`` tensor/sequence that
+        subclasses can use to compute the count purely from processor-
+        produced metadata — the canonical pattern in ``find_mm_token_lengths``
+        is to thread it through from ``multimodal_data["video"]["video_grid_thw"]``
+        so the count is derived without re-running the HF processor.
 
-        Subclasses can override this method to provide custom logic to calculate the number of tokens.
+        The default implementation ignores ``video_grid_thw`` and delegates
+        to the Hugging Face processor's ``_get_num_multimodal_tokens`` method;
+        subclasses that need ``video_grid_thw`` must override this method.
         """
         video_width = video[0].width
         video_height = video[0].height
@@ -723,9 +729,17 @@ def _process_multimodal_with_dummy_placeholders(
 def _get_single_mm_token_lengths(
     mm_data: Dict[str, Any],
     input_processor: BaseMultimodalInputProcessor,
+    *,
+    multimodal_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[List[int]]:
-    """Get the single set of MM token lengths (first value from find_mm_token_lengths). Returns None if empty."""
-    num_mm_tokens_by_key = find_mm_token_lengths(mm_data, input_processor)
+    """Get the single set of MM token lengths (first value from find_mm_token_lengths). Returns None if empty.
+
+    ``multimodal_data`` is forwarded to ``find_mm_token_lengths`` so the latter
+    can pick up precomputed per-video counts populated by the input processor's
+    ``__call__``, avoiding duplicate HF-processor work.
+    """
+    num_mm_tokens_by_key = find_mm_token_lengths(
+        mm_data, input_processor, multimodal_data=multimodal_data)
     if not num_mm_tokens_by_key:
         return None
     # find_mm_token_lengths returns Dict[modality, List[int]], e.g. {"image": [2928, 2928]}.
@@ -823,7 +837,16 @@ def create_input_processor_with_hash(
             inputs.get("mm_processor_kwargs"),
             sampling_params,
         )
-        num_mm_tokens = _get_single_mm_token_lengths(mm_data, input_processor)
+        # Forward processed multimodal_data so find_mm_token_lengths can pick
+        # up precomputed per-video counts instead of recomputing via the HF
+        # processor (and avoids the need for any cache on input_processor).
+        precomputed_multimodal_data = (extra_processed_inputs or {}).get(
+            "multimodal_data") if extra_processed_inputs is not None else None
+        num_mm_tokens = _get_single_mm_token_lengths(
+            mm_data,
+            input_processor,
+            multimodal_data=precomputed_multimodal_data,
+        )
         if num_mm_tokens is None:
             raise ValueError(
                 "tokenized_multimodal_process: find_mm_token_lengths returned "
@@ -886,9 +909,19 @@ def create_input_processor_with_hash(
         if precomputed_num_mm_tokens is not None:
             num_mm_tokens = precomputed_num_mm_tokens
         else:
+            # Forward extra_processed_inputs["multimodal_data"] so the lookup
+            # picks up per-video counts populated by input_processor.__call__
+            # rather than recomputing via the HF processor.
+            precomputed_multimodal_data = (
+                extra_processed_inputs
+                or {}).get("multimodal_data"
+                           ) if extra_processed_inputs is not None else None
             # TODO: here we assume there is only one modality for now
             num_mm_tokens_by_key = find_mm_token_lengths(
-                mm_data, input_processor)
+                mm_data,
+                input_processor,
+                multimodal_data=precomputed_multimodal_data,
+            )
             if not num_mm_tokens_by_key:
                 return [], None
             num_mm_tokens = next(iter(num_mm_tokens_by_key.values()))
