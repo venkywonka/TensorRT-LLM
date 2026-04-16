@@ -264,39 +264,14 @@ class Qwen3VLInputProcessorBase(BaseMultimodalInputProcessor, BaseMultimodalDumm
         video_grid_thw: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> int:
-        """Return the number of video tokens for one video item.
-
-        Fast path (pure, thread-safe): when ``video_grid_thw`` is provided
-        (a 1D tensor/sequence of ``(t, h, w)`` for this one video — typically
-        a row of the tensor ``__call__`` stored in
-        ``multimodal_data["video"]["video_grid_thw"]``), the count is derived
-        directly by the standard Qwen3-VL formula:
-
-            tokens = t * (h // merge) * (w // merge)
-
-        Slow fallback (rare): when ``video_grid_thw`` is not provided (e.g.
-        unit tests calling the method directly, or ad-hoc estimation paths
-        that don't have the processor output), run the HF processor on this
-        single video to derive a fresh ``video_grid_thw`` and apply the same
-        formula.
-
-        We can't rely on ``BaseMultimodalInputProcessor.get_num_tokens_per_video``'s
-        default (which calls ``_get_num_multimodal_tokens(video_sizes=...)``)
-        for the fallback: HF's ``Qwen3VLProcessor._get_num_multimodal_tokens``
-        raises when called with ``video_sizes`` only — its video branch
-        references ``merge_size`` (defined only in the image branch) and
-        calls ``video_processor.get_number_of_video_patches`` (not defined
-        on ``Qwen3VLVideoProcessor``). The base class would silently swallow
-        that exception and return the wrong formula
-        ``num_tokens_per_frame * num_frames // temporal_patch_size``, which
-        diverges from the real processor output and would break chunked-
-        prefill boundary calculations.
-        """
         merge = self.config.vision_config.spatial_merge_size
         if video_grid_thw is not None:
             t, h, w = (int(x) for x in video_grid_thw)
             return t * (h // merge) * (w // merge)
 
+        # Must run the full processor: HF's Qwen3VLProcessor._get_num_multimodal_tokens
+        # (what the base class default delegates to) raises on video-only calls
+        # and returns a wrong-formula fallback that would break chunked prefill.
         do_rescale = not (video and isinstance(video[0], torch.Tensor))
         processed = self._processor(
             text=["<|vision_start|><|video_pad|><|vision_end|>"],
@@ -392,11 +367,6 @@ class Qwen3VLInputProcessorBase(BaseMultimodalInputProcessor, BaseMultimodalDumm
         if pixel_values_videos is not None:
             multimodal_data["video"] = {
                 "pixel_values_videos": pixel_values_videos.to(self.dtype),
-                # video_grid_thw (one row per video, `(t, h, w)`) is the
-                # single source of truth for per-video token counts;
-                # find_mm_token_lengths threads it into
-                # get_num_tokens_per_video(video_grid_thw=row) per video —
-                # pure data flow, no processor-instance state.
                 "video_grid_thw": processed_inputs.get("video_grid_thw"),
             }
 

@@ -305,15 +305,10 @@ class BaseMultimodalInputProcessor(ABC):
         """
         Calculate the number of tokens generated for a video.
 
-        ``video_grid_thw`` is an optional ``(t, h, w)`` tensor/sequence that
-        subclasses can use to compute the count purely from processor-
-        produced metadata — the canonical pattern in ``find_mm_token_lengths``
-        is to thread it through from ``multimodal_data["video"]["video_grid_thw"]``
-        so the count is derived without re-running the HF processor.
+        This (default) method delegates to the Hugging Face processor's '_get_num_multimodal_tokens' method and ignores ``video_grid_thw``.
+        Returns the token count for the given video.
 
-        The default implementation ignores ``video_grid_thw`` and delegates
-        to the Hugging Face processor's ``_get_num_multimodal_tokens`` method;
-        subclasses that need ``video_grid_thw`` must override this method.
+        Subclasses can override to consume ``video_grid_thw`` (typically threaded through from ``multimodal_data["video"]["video_grid_thw"]``) and skip the HF recompute.
         """
         video_width = video[0].width
         video_height = video[0].height
@@ -732,12 +727,7 @@ def _get_single_mm_token_lengths(
     *,
     multimodal_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[List[int]]:
-    """Get the single set of MM token lengths (first value from find_mm_token_lengths). Returns None if empty.
-
-    ``multimodal_data`` is forwarded to ``find_mm_token_lengths`` so the latter
-    can pick up precomputed per-video counts populated by the input processor's
-    ``__call__``, avoiding duplicate HF-processor work.
-    """
+    """Get the single set of MM token lengths (first value from find_mm_token_lengths). Returns None if empty."""
     num_mm_tokens_by_key = find_mm_token_lengths(
         mm_data, input_processor, multimodal_data=multimodal_data)
     if not num_mm_tokens_by_key:
@@ -837,15 +827,11 @@ def create_input_processor_with_hash(
             inputs.get("mm_processor_kwargs"),
             sampling_params,
         )
-        # Forward processed multimodal_data so find_mm_token_lengths can pick
-        # up precomputed per-video counts instead of recomputing via the HF
-        # processor (and avoids the need for any cache on input_processor).
-        precomputed_multimodal_data = (extra_processed_inputs or {}).get(
-            "multimodal_data") if extra_processed_inputs is not None else None
         num_mm_tokens = _get_single_mm_token_lengths(
             mm_data,
             input_processor,
-            multimodal_data=precomputed_multimodal_data,
+            multimodal_data=(extra_processed_inputs
+                             or {}).get("multimodal_data"),
         )
         if num_mm_tokens is None:
             raise ValueError(
@@ -909,18 +895,12 @@ def create_input_processor_with_hash(
         if precomputed_num_mm_tokens is not None:
             num_mm_tokens = precomputed_num_mm_tokens
         else:
-            # Forward extra_processed_inputs["multimodal_data"] so the lookup
-            # picks up per-video counts populated by input_processor.__call__
-            # rather than recomputing via the HF processor.
-            precomputed_multimodal_data = (
-                extra_processed_inputs
-                or {}).get("multimodal_data"
-                           ) if extra_processed_inputs is not None else None
             # TODO: here we assume there is only one modality for now
             num_mm_tokens_by_key = find_mm_token_lengths(
                 mm_data,
                 input_processor,
-                multimodal_data=precomputed_multimodal_data,
+                multimodal_data=(extra_processed_inputs
+                                 or {}).get("multimodal_data"),
             )
             if not num_mm_tokens_by_key:
                 return [], None

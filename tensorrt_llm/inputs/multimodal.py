@@ -134,9 +134,7 @@ class MultimodalRuntimeData:
         past_seen_token_num: Total tokens already processed in previous iterations (cached)
         mm_contiguous_spans: List of (start_position, token_count) per contiguous MM token run
         chunk_end_pos: End position of the current chunk for chunked prefill
-        special_token_offsets: Sorted indices of special tokens in the flat MM
-            token union. MUST be non-decreasing — ``__post_init__`` uses
-            ``bisect`` for O(log N) cached/in-chunk counting.
+        special_token_offsets: Sorted indices of special tokens in the flat MM token union
 
         num_cached_mm_tokens: Number of MM tokens that are cached (computed)
         num_mm_tokens_in_chunk: Number of MM tokens in the current chunk (computed)
@@ -201,9 +199,8 @@ class MultimodalRuntimeData:
                         self.num_mm_tokens_in_chunk += length
 
         if len(self.special_token_offsets) > 0:
-            # Sortedness of special_token_offsets is guaranteed by the sole
-            # producer find_contiguous_mm_spans (torch.where returns sorted
-            # indices), so bisect_left is safe without a runtime check.
+            # find_contiguous_mm_spans (the sole producer) returns sorted
+            # indices via torch.where, so bisect_left is safe.
             s = self.special_token_offsets
             self.num_cached_special_tokens = bisect.bisect_left(
                 s, self.num_cached_mm_tokens)
@@ -753,22 +750,11 @@ def find_mm_token_lengths(
     multimodal content tokens. This mm_token_lengths represents the full chunk from beginning
     to end, not just pure image/video/audio tokens.
 
-    For videos, the caller can thread ``multimodal_data`` through so that
-    this function picks up the processor-produced ``video_grid_thw`` tensor
-    (already stored at ``multimodal_data["video"]["video_grid_thw"]`` by the
-    input processor's ``__call__``). When present and shape-matched against
-    the number of videos in ``mm_data``, each row is forwarded per-video to
-    ``input_processor.get_num_tokens_per_video(video=..., video_grid_thw=row)``
-    — the method's pure branch then computes the count directly from the row,
-    without running the HF processor again. This is the production hot path
-    for video token counting and carries no shared mutable state on the
-    input processor (thread-safe by construction).
-
-    On missing ``multimodal_data`` / missing ``video_grid_thw`` / row-count
-    mismatch, this function falls back to calling
-    ``get_num_tokens_per_video(video=...)`` without a ``video_grid_thw``
-    kwarg — defensive fallback rather than hard assert so a misbehaving
-    subclass cannot break inference.
+    For videos, if ``multimodal_data["video"]["video_grid_thw"]`` is shape-
+    matched against ``mm_data``, each row is forwarded to
+    ``input_processor.get_num_tokens_per_video(video_grid_thw=row)`` so the
+    count is derived without re-running the HF processor. Falls back to
+    calling the method without ``video_grid_thw`` on mismatch / absence.
     """
 
     mm_items = {
@@ -786,7 +772,6 @@ def find_mm_token_lengths(
                 f"Input processor {type(input_processor).__name__} does not have 'get_num_tokens_per_{modality}' method required for multimodal hashing."
             )
 
-        # Decide whether the fast path can be taken for the video modality.
         fast_path_vgt = None
         if modality == "video" and video_grid_thw is not None:
             if len(video_grid_thw) == len(items):
