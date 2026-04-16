@@ -205,6 +205,28 @@ def _locate_accepted_draft_tokens(requests: List[LlmRequest]):
     return num_accepted_draft_tokens_offset, accepted_draft_tokens_indices, rewind_draft_token_separate_adjustments
 
 
+def _populate_dummy_mrope_config(req: LlmRequest, token_num: int,
+                                 is_gen: bool) -> None:
+    """Attach a dummy mrope_config to a warmup request's py_multimodal_data.
+
+    Used by the dummy-request paths in both KVCacheManager and KVCacheManagerV2
+    to satisfy models that consume mrope_config (e.g. Qwen2-VL) during warmup.
+
+    TODO: Plan is for each model to provide its own dummy_data. Until then,
+    this helper is the workaround that fabricates mrope_config here.
+    """
+    mrope_config: Dict[str, torch.Tensor] = {
+        "mrope_position_ids":
+        torch.arange(0, token_num, dtype=torch.int32).expand(3, 1, -1).clone(),
+    }
+    if is_gen:
+        mrope_config["mrope_position_deltas"] = torch.zeros(
+            1, dtype=torch.int32).unsqueeze(0)
+    if req.py_multimodal_data is None:
+        req.py_multimodal_data = {}
+    req.py_multimodal_data["mrope_config"] = mrope_config
+
+
 def _update_kv_cache_draft_token_location(cache_manager,
                                           scheduled_batch: ScheduledRequests,
                                           attn_metadata: "AttentionMetadata",
@@ -764,20 +786,8 @@ class KVCacheManager(BaseResourceManager):
                         (req_id, token_num, beam_width))
                     draft_batch_llm_requests.append(req)
 
-            # TODO: Planning to get dummy_data from each model. Before that, we need to add dummy mrope_config to the request here.
             if use_mrope:
-                dummy_mrope_position_ids = torch.arange(
-                    0, token_num, dtype=torch.int32).expand(3, 1, -1).clone()
-                if req.py_multimodal_data is None:
-                    req.py_multimodal_data = {}
-                req.py_multimodal_data["mrope_config"] = {
-                    "mrope_position_ids": dummy_mrope_position_ids
-                }
-                if is_gen:
-                    dummy_mrope_position_deltas = torch.zeros(
-                        1, dtype=torch.int32).unsqueeze(0)
-                    req.py_multimodal_data["mrope_config"][
-                        "mrope_position_deltas"] = dummy_mrope_position_deltas
+                _populate_dummy_mrope_config(req, token_num, is_gen)
             requests.append(req)
 
         # Batch add_sequence for all dummy requests, then add extra tokens.
@@ -2375,20 +2385,8 @@ class KVCacheManagerV2(BaseResourceManager):
                             release_resources(req, free_draft_resources=True)
                             return None
 
-            # TODO: Planning to get dummy_data from each model. Before that, we need to add dummy mrope_config to the request here.
             if use_mrope:
-                dummy_mrope_position_ids = torch.arange(
-                    0, token_num, dtype=torch.int32).expand(3, 1, -1).clone()
-                if req.py_multimodal_data is None:
-                    req.py_multimodal_data = {}
-                req.py_multimodal_data["mrope_config"] = {
-                    "mrope_position_ids": dummy_mrope_position_ids
-                }
-                if is_gen:
-                    dummy_mrope_position_deltas = torch.zeros(
-                        1, dtype=torch.int32).unsqueeze(0)
-                    req.py_multimodal_data["mrope_config"][
-                        "mrope_position_deltas"] = dummy_mrope_position_deltas
+                _populate_dummy_mrope_config(req, token_num, is_gen)
             requests.append(req)
 
         return requests
