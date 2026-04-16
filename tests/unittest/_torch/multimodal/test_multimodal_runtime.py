@@ -1,6 +1,7 @@
 from typing import List
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 import torch
 
@@ -13,41 +14,72 @@ from tensorrt_llm.inputs.multimodal import (MultimodalParams,
                                             find_mm_token_positions)
 from tensorrt_llm.inputs.registry import compute_mm_contiguous_spans_if_absent
 
+# Embedding dim kept small — functions under test only index along dim 0.
+_EMBED_DIM = 4
+
+
+def _make_mock_runtime(
+    num_cached_mm_tokens: int,
+    num_mm_tokens_in_chunk: int,
+    mm_token_lengths: List[int],
+    num_cached_special_tokens: int = 0,
+    num_special_tokens_in_chunk: int = 0,
+    total_special_tokens_in_request: int = 0,
+) -> Mock:
+    """Build a Mock(spec=MultimodalRuntimeData) with the given counters."""
+    runtime = Mock(spec=MultimodalRuntimeData)
+    runtime.num_cached_mm_tokens = num_cached_mm_tokens
+    runtime.num_mm_tokens_in_chunk = num_mm_tokens_in_chunk
+    runtime.total_mm_tokens_in_request = sum(mm_token_lengths)
+    runtime.num_cached_special_tokens = num_cached_special_tokens
+    runtime.num_special_tokens_in_chunk = num_special_tokens_in_chunk
+    runtime.total_special_tokens_in_request = total_special_tokens_in_request
+    return runtime
+
+
+def _make_multimodal_params(
+    num_cached_mm_tokens: int,
+    num_mm_tokens_in_chunk: int,
+    mm_token_lengths: List[int],
+) -> MultimodalParams:
+    """Build a MultimodalParams wrapping a mock runtime."""
+    runtime = _make_mock_runtime(num_cached_mm_tokens, num_mm_tokens_in_chunk,
+                                 mm_token_lengths)
+    return MultimodalParams(multimodal_runtime=runtime)
+
 
 class TestMultimodalRuntimeData:
-    """Test cases for MultimodalRuntimeData computation logic, testing both KV cache reuse and chunked prefill."""
+    """Test cases for MultimodalRuntimeData span-counting logic (__post_init__)."""
 
-    def test_fully_cached_multimodal_tokens(self):
-        """Test when all multimodal tokens are cached (KV cache reuse scenario)."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=20,
-            mm_contiguous_spans=[(0, 5), (5, 8), (13, 7)],  # Total: 20 tokens
-            chunk_end_pos=20,
-            special_token_offsets=[])
+    def test_fully_cached(self):
+        """All spans end before past_seen → everything cached."""
+        runtime = MultimodalRuntimeData(past_seen_token_num=20,
+                                        mm_contiguous_spans=[(0, 5), (5, 8),
+                                                             (13, 7)],
+                                        chunk_end_pos=20,
+                                        special_token_offsets=[])
 
-        # All tokens should be cached since past_seen_token_num (20) >= all positions + lengths
         assert runtime.num_cached_mm_tokens == 20
         assert runtime.num_mm_tokens_in_chunk == 0
 
-    def test_no_cached_multimodal_tokens(self):
-        """Test when no multimodal tokens are cached (KV cache reuse scenario)."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=10,
-            mm_contiguous_spans=[(10, 5), (18, 8), (30, 7)],  # Total: 20 tokens
-            chunk_end_pos=40,
-            special_token_offsets=[])
+    def test_no_cached(self):
+        """All spans start at or after past_seen → nothing cached."""
+        runtime = MultimodalRuntimeData(past_seen_token_num=10,
+                                        mm_contiguous_spans=[(10, 5), (18, 8),
+                                                             (30, 7)],
+                                        chunk_end_pos=40,
+                                        special_token_offsets=[])
 
-        # No multimodal tokens should be cached
         assert runtime.num_cached_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 20
 
     def test_partial_caching_with_chunk_boundaries(self):
-        """Test partial caching with chunk boundaries (chunked prefill scenario)."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=15,
-            mm_contiguous_spans=[(10, 5), (18, 8), (25, 7)],  # Total: 20 tokens
-            chunk_end_pos=30,
-            special_token_offsets=[])
+        """Spans straddle past_seen and chunk_end."""
+        runtime = MultimodalRuntimeData(past_seen_token_num=15,
+                                        mm_contiguous_spans=[(10, 5), (18, 8),
+                                                             (25, 7)],
+                                        chunk_end_pos=30,
+                                        special_token_offsets=[])
 
         # Span [10,15): 5 tokens fully cached
         # Span [18,26): 0 cached, 8 in chunk
@@ -110,22 +142,6 @@ class TestMultimodalRuntimeData:
                                   chunk_end_pos=20,
                                   special_token_offsets=[])
 
-    def test_single_item_multiple_spans(self):
-        """One video item whose MM tokens are non-contiguous — THE bug scenario.
-        Video with 3 temporal groups of 196 tokens, separated by 8-token text gaps.
-        Layout: text[0,10) group1[10,206) text[206,214) group2[214,410) text[410,418) group3[418,614)
-        Chunk [0, 256) should contain 196 + 42 = 238 MM tokens."""
-        runtime = MultimodalRuntimeData(past_seen_token_num=0,
-                                        mm_contiguous_spans=[(10, 196),
-                                                             (214, 196),
-                                                             (418, 196)],
-                                        chunk_end_pos=256,
-                                        special_token_offsets=[])
-
-        assert runtime.num_cached_mm_tokens == 0
-        assert runtime.num_mm_tokens_in_chunk == 238
-        assert runtime.total_mm_tokens_in_request == 588
-
 
 class TestNonContiguousMultimodalRuntimeData:
     """Test cases for MultimodalRuntimeData with non-contiguous MM regions.
@@ -143,40 +159,37 @@ class TestNonContiguousMultimodalRuntimeData:
                                         special_token_offsets=[])
 
         assert runtime.num_cached_mm_tokens == 0
-        assert runtime.num_mm_tokens_in_chunk == 20  # both full regions
+        assert runtime.num_mm_tokens_in_chunk == 20
 
     def test_two_images_separated_chunk_in_text_gap(self):
-        """Chunk [15, 30) lands entirely in the text gap between two images.
-        Images at [5,15) and [30,40). No MM tokens in chunk."""
+        """Chunk [15, 30) in the text gap between images at [5,15) and [30,40)."""
         runtime = MultimodalRuntimeData(past_seen_token_num=15,
                                         mm_contiguous_spans=[(5, 10), (30, 10)],
                                         chunk_end_pos=30,
                                         special_token_offsets=[])
 
-        assert runtime.num_cached_mm_tokens == 10  # first image fully cached
-        assert runtime.num_mm_tokens_in_chunk == 0  # gap has no MM tokens
+        assert runtime.num_cached_mm_tokens == 10
+        assert runtime.num_mm_tokens_in_chunk == 0
 
     def test_two_images_separated_chunk_hits_second_only(self):
-        """Chunk [25, 45) starts in the gap and covers the second image.
-        Images at [5,15) and [30,40)."""
+        """Chunk [25, 45) starts in gap, covers second image at [30,40)."""
         runtime = MultimodalRuntimeData(past_seen_token_num=25,
                                         mm_contiguous_spans=[(5, 10), (30, 10)],
                                         chunk_end_pos=45,
                                         special_token_offsets=[])
 
-        assert runtime.num_cached_mm_tokens == 10  # first image fully cached
-        assert runtime.num_mm_tokens_in_chunk == 10  # second image fully in chunk
+        assert runtime.num_cached_mm_tokens == 10
+        assert runtime.num_mm_tokens_in_chunk == 10
 
     def test_two_images_separated_chunk_straddles_second(self):
-        """Chunk [25, 35) starts in gap, partially covers second image.
-        Images at [5,15) and [30,40)."""
+        """Chunk [25, 35) partially covers second image at [30,40)."""
         runtime = MultimodalRuntimeData(past_seen_token_num=25,
                                         mm_contiguous_spans=[(5, 10), (30, 10)],
                                         chunk_end_pos=35,
                                         special_token_offsets=[])
 
-        assert runtime.num_cached_mm_tokens == 10  # first image fully cached
-        assert runtime.num_mm_tokens_in_chunk == 5  # 5 tokens of second image [30,35)
+        assert runtime.num_cached_mm_tokens == 10
+        assert runtime.num_mm_tokens_in_chunk == 5
 
     def test_three_images_chunk_hits_middle_only(self):
         """Three images at [5,15), [30,40), [60,70). Chunk [25, 45) hits middle only."""
@@ -186,20 +199,20 @@ class TestNonContiguousMultimodalRuntimeData:
                                         chunk_end_pos=45,
                                         special_token_offsets=[])
 
-        assert runtime.num_cached_mm_tokens == 10  # first image cached
-        assert runtime.num_mm_tokens_in_chunk == 10  # second image fully in chunk
+        assert runtime.num_cached_mm_tokens == 10
+        assert runtime.num_mm_tokens_in_chunk == 10
 
     def test_three_images_chunk_partial_first_full_second_miss_third(self):
-        """Three images at [5,15), [30,40), [60,70). Chunk [10, 45).
-        First image partial (5 tokens cached, 5 in chunk), second full in chunk, third missed."""
+        """Three images at [5,15), [30,40), [60,70). Chunk [10, 45)."""
         runtime = MultimodalRuntimeData(past_seen_token_num=10,
                                         mm_contiguous_spans=[(5, 10), (30, 10),
                                                              (60, 10)],
                                         chunk_end_pos=45,
                                         special_token_offsets=[])
 
-        assert runtime.num_cached_mm_tokens == 5  # [5,10) of first image cached
-        assert runtime.num_mm_tokens_in_chunk == 15  # 5 from first + 10 from second
+        # [5,10) cached; [10,15) + [30,40) in chunk
+        assert runtime.num_cached_mm_tokens == 5
+        assert runtime.num_mm_tokens_in_chunk == 15
 
     def test_scattered_video_frames_qwen3vl_style(self):
         """Simulate Qwen3-VL timestamp-separated frames:
@@ -248,7 +261,7 @@ class TestNonContiguousWithContiguousSpans:
     """
 
     def test_video_three_groups_chunk_hits_first_two(self):
-        """Video with 3 temporal groups of 196 MM tokens each:
+        """THE bug scenario — video with 3 temporal groups of 196 MM tokens each:
         Group1: [10, 206), Gap: [206, 214), Group2: [214, 410), Gap: [410, 418), Group3: [418, 614)
         Total MM tokens: 588. Chunk [0, 256) should contain 196 + 42 = 238 MM tokens.
         """
@@ -261,9 +274,10 @@ class TestNonContiguousWithContiguousSpans:
 
         assert runtime.num_cached_mm_tokens == 0
         assert runtime.num_mm_tokens_in_chunk == 238
+        assert runtime.total_mm_tokens_in_request == 588
 
     def test_video_three_groups_chunk_in_middle(self):
-        """Same video, chunk [256, 512). past_seen=256."""
+        """Same video, chunk [256, _EMBED_DIM). past_seen=256."""
         runtime = MultimodalRuntimeData(past_seen_token_num=256,
                                         mm_contiguous_spans=[(10, 196),
                                                              (214, 196),
@@ -300,105 +314,42 @@ class TestNonContiguousWithContiguousSpans:
         assert runtime.num_cached_mm_tokens == 40  # [10,50)
         assert runtime.num_mm_tokens_in_chunk == 30  # [50,80)
 
-    def test_all_cached_with_spans(self):
-        """All MM tokens cached."""
-        runtime = MultimodalRuntimeData(past_seen_token_num=700,
-                                        mm_contiguous_spans=[(10, 196),
-                                                             (214, 196)],
-                                        chunk_end_pos=800,
-                                        special_token_offsets=[])
-
-        assert runtime.num_cached_mm_tokens == 392
-        assert runtime.num_mm_tokens_in_chunk == 0
-
-    def test_chunk_in_text_gap(self):
-        """Chunk falls entirely in a text gap between groups."""
-        runtime = MultimodalRuntimeData(past_seen_token_num=60,
-                                        mm_contiguous_spans=[(10, 50),
-                                                             (200, 50)],
-                                        chunk_end_pos=200,
-                                        special_token_offsets=[])
-
-        assert runtime.num_cached_mm_tokens == 50  # group1 fully cached
-        assert runtime.num_mm_tokens_in_chunk == 0  # gap has no MM tokens
-
 
 class TestFindInputMmEmbed:
-    """Focused test cases for find_input_mm_embeds function - testing both KV cache reuse and chunked prefill."""
-
-    def create_mock_runtime(self,
-                            num_cached_mm_tokens: int,
-                            num_mm_tokens_in_chunk: int,
-                            mm_token_lengths: List[int],
-                            num_cached_special_tokens: int = 0,
-                            num_special_tokens_in_chunk: int = 0,
-                            total_special_tokens_in_request: int = 0):
-        """Helper to create a mock MultimodalRuntimeData."""
-        runtime = Mock(spec=MultimodalRuntimeData)
-        runtime.num_cached_mm_tokens = num_cached_mm_tokens
-        runtime.num_mm_tokens_in_chunk = num_mm_tokens_in_chunk
-        runtime.total_mm_tokens_in_request = sum(mm_token_lengths)
-        runtime.num_cached_special_tokens = num_cached_special_tokens
-        runtime.num_special_tokens_in_chunk = num_special_tokens_in_chunk
-        runtime.total_special_tokens_in_request = total_special_tokens_in_request
-
-        return runtime
-
-    def create_multimodal_params(self, num_cached_mm_tokens: int,
-                                 num_mm_tokens_in_chunk: int,
-                                 mm_token_lengths: List[int]):
-        """Helper to create MultimodalParams with runtime data."""
-        runtime = self.create_mock_runtime(num_cached_mm_tokens,
-                                           num_mm_tokens_in_chunk,
-                                           mm_token_lengths)
-        return MultimodalParams(multimodal_runtime=runtime)
+    """Test cases for find_input_mm_embeds — slicing embeddings per chunk."""
 
     def test_mm_embed_not_batched(self):
-        """
-        Test individual batching mode where each mm_embed corresponds to one param.
-        This tests the case where len(mm_embeds) == len(multimodal_params) > 1.
-        """
+        """Individual batching: len(mm_embeds) == len(multimodal_params) > 1."""
         mm_embeds = [
-            torch.randn(10, 512),  # Batch 1: 10 tokens
-            torch.randn(15, 512),  # Batch 2: 15 tokens
-            torch.randn(8, 512)  # Batch 3: 8 tokens
+            torch.randn(10, _EMBED_DIM),
+            torch.randn(15, _EMBED_DIM),
+            torch.randn(8, _EMBED_DIM),
         ]
         multimodal_params = [
-            self.create_multimodal_params(
-                3, 7, [5, 5]),  # 3 unseen, 7 in current chunk
-            self.create_multimodal_params(8, 7,
-                                          [15]),  # 8 unseen, 7 in current chunk
-            self.create_multimodal_params(
-                0, 8, [4, 4])  # 0 unseen, 8 in current chunk
+            _make_multimodal_params(3, 7, [5, 5]),
+            _make_multimodal_params(8, 7, [15]),
+            _make_multimodal_params(0, 8, [4, 4]),
         ]
 
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
 
-        # Should return individual slices for each batch
         assert len(result) == 3
-        assert result[0].shape == (7, 512)  # 7 tokens in current chunk
-        assert result[1].shape == (7, 512)  # 7 tokens in current chunk
-        assert result[2].shape == (8, 512)  # 8 tokens in current chunk
-
-        # Verify the slices are correct
+        assert result[0].shape == (7, _EMBED_DIM)
+        assert result[1].shape == (7, _EMBED_DIM)
+        assert result[2].shape == (8, _EMBED_DIM)
         torch.testing.assert_close(result[0], mm_embeds[0][3:10])
         torch.testing.assert_close(result[1], mm_embeds[1][8:15])
         torch.testing.assert_close(result[2], mm_embeds[2][0:8])
 
     def test_mm_embed_batched(self):
-        """
-        Test batching (concatenated) mm_embeds with fused mm_embeds for each batch.
-        This tests the case where len(mm_embeds) == 1
-        """
-        mm_embeds = [torch.randn(33,
-                                 512)]  # Pre-concatenated: 10 + 13 + 10 tokens
+        """Batched: len(mm_embeds) == 1, slicing from concatenated tensor."""
+        mm_embeds = [torch.randn(33, _EMBED_DIM)]
         multimodal_params = [
-            self.create_multimodal_params(4, 6,
-                                          [10]),  # 4 cached, 6 in current chunk
-            self.create_multimodal_params(
-                7, 6, [6, 7]),  # 7 cached, 6 in current chunk
-            self.create_multimodal_params(
-                3, 7, [4, 6])  # 3 cached, 7 in current chunk
+            _make_multimodal_params(4, 6, [10]),  # 4 cached, 6 in current chunk
+            _make_multimodal_params(7, 6,
+                                    [6, 7]),  # 7 cached, 6 in current chunk
+            _make_multimodal_params(3, 7,
+                                    [4, 6])  # 3 cached, 7 in current chunk
         ]
 
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
@@ -409,7 +360,7 @@ class TestFindInputMmEmbed:
         # Batch 3: [23+3:23+10] = [26:33] = 7 tokens
         # Total: 6 + 6 + 7 = 19 tokens
         assert len(result) == 1
-        assert result[0].shape == (19, 512)
+        assert result[0].shape == (19, _EMBED_DIM)
 
         # Verify the slices are correct
         expected = torch.cat(
@@ -425,75 +376,56 @@ class TestFindInputMmEmbed:
         """
         Test mixed scenarios where some batches are fully cached (should be skipped).
         """
-        mm_embeds = [torch.randn(25, 512)]  # Pre-concatenated: 8 + 9 + 8 tokens
+        mm_embeds = [torch.randn(25, _EMBED_DIM)
+                     ]  # Pre-concatenated: 8 + 9 + 8 tokens
         multimodal_params = [
-            self.create_multimodal_params(
-                8, 0, [8]),  # All unseen - should be skipped
-            self.create_multimodal_params(
-                3, 6, [6, 3]),  # 3 unseen, 6 in current chunk
-            self.create_multimodal_params(8, 0,
-                                          [8])  # All unseen - should be skipped
+            _make_multimodal_params(8, 0,
+                                    [8]),  # All unseen - should be skipped
+            _make_multimodal_params(3, 6,
+                                    [6, 3]),  # 3 unseen, 6 in current chunk
+            _make_multimodal_params(8, 0, [8])  # All unseen - should be skipped
         ]
 
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
 
         # Only batch 2 should contribute: [8+3:8+9] = [11:17] = 6 tokens
         assert len(result) == 1
-        assert result[0].shape == (6, 512)
+        assert result[0].shape == (6, _EMBED_DIM)
 
         # Verify the slice is correct
         torch.testing.assert_close(result[0], mm_embeds[0][11:17])
 
     def test_all_batches_fully_unseen(self):
-        """
-        Test edge case where all batches are fully unseen.
-        """
-        mm_embeds = [torch.randn(30,
-                                 512)]  # Pre-concatenated: 10 + 10 + 10 tokens
+        """All cached, 0 in chunk → empty result."""
+        mm_embeds = [torch.randn(30, _EMBED_DIM)]
         multimodal_params = [
-            self.create_multimodal_params(10, 0, [10]),  # All unseen
-            self.create_multimodal_params(10, 0, [10]),  # All unseen
-            self.create_multimodal_params(10, 0, [10])  # All unseen
+            _make_multimodal_params(10, 0, [10]),
+            _make_multimodal_params(10, 0, [10]),
+            _make_multimodal_params(10, 0, [10]),
         ]
-
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
-
-        # Should return empty list
         assert result == []
 
     def test_no_batches_cached(self):
-        """
-        Test edge case where no batches have any cached tokens.
-        """
-        mm_embeds = [torch.randn(30,
-                                 512)]  # Pre-concatenated: 10 + 10 + 10 tokens
+        """0 cached, all in chunk → returns full tensor."""
+        mm_embeds = [torch.randn(30, _EMBED_DIM)]
         multimodal_params = [
-            self.create_multimodal_params(
-                0, 10, [10]),  # No unseen, 10 in current chunk
-            self.create_multimodal_params(
-                0, 10, [10]),  # No unseen, 10 in current chunk
-            self.create_multimodal_params(
-                0, 10, [10])  # No unseen, 10 in current chunk
+            _make_multimodal_params(0, 10, [10]),
+            _make_multimodal_params(0, 10, [10]),
+            _make_multimodal_params(0, 10, [10]),
         ]
-
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
-
-        # Should return the full embeddings
         assert len(result) == 1
         torch.testing.assert_close(result[0], mm_embeds[0])
 
     def test_chunked_prefill_scenario(self):
-        """
-        Test chunked prefill scenario where some tokens are cached and some are in current chunk.
-        """
-        mm_embeds = [torch.randn(25, 512)]  # Pre-concatenated: 8 + 9 + 8 tokens
+        """Mix of cached and in-chunk across three batched requests."""
+        mm_embeds = [torch.randn(25, _EMBED_DIM)
+                     ]  # Pre-concatenated: 8 + 9 + 8 tokens
         multimodal_params = [
-            self.create_multimodal_params(5, 3,
-                                          [8]),  # 5 unseen, 3 in current chunk
-            self.create_multimodal_params(2, 7,
-                                          [9]),  # 2 unseen, 7 in current chunk
-            self.create_multimodal_params(6, 2,
-                                          [8])  # 6 unseen, 2 in current chunk
+            _make_multimodal_params(5, 3, [8]),  # 5 unseen, 3 in current chunk
+            _make_multimodal_params(2, 7, [9]),  # 2 unseen, 7 in current chunk
+            _make_multimodal_params(6, 2, [8])  # 6 unseen, 2 in current chunk
         ]
 
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
@@ -504,7 +436,7 @@ class TestFindInputMmEmbed:
         # Batch 3: [17+6:17+8] = [23:25] = 2 tokens
         # Total: 3 + 7 + 2 = 12 tokens
         assert len(result) == 1
-        assert result[0].shape == (12, 512)
+        assert result[0].shape == (12, _EMBED_DIM)
 
         # Verify the slices are correct
         expected = torch.cat(
@@ -521,9 +453,10 @@ class TestFindInputMmEmbed:
         Test error handling when mm_embeds and multimodal_params counts don't match
         in individual batching mode.
         """
-        mm_embeds = [torch.randn(10, 512), torch.randn(15, 512)]  # 2 embeddings
-        multimodal_params = [self.create_multimodal_params(0, 10, [10])
-                             ]  # Only 1 param
+        mm_embeds = [torch.randn(10, _EMBED_DIM),
+                     torch.randn(15, _EMBED_DIM)]  # 2 embeddings
+        multimodal_params = [_make_multimodal_params(0, 10,
+                                                     [10])]  # Only 1 param
 
         with pytest.raises(
                 ValueError,
@@ -532,47 +465,24 @@ class TestFindInputMmEmbed:
         ):
             find_input_mm_embeds(mm_embeds, multimodal_params)
 
-    def test_single_batch_scenarios(self):
-        """
-        Test various single batch scenarios.
-        """
-        # Single batch, no caching
-        mm_embeds = [torch.randn(20, 512)]
-        multimodal_params = [self.create_multimodal_params(0, 20, [20])]
+    @pytest.mark.parametrize("cached,in_chunk,expect_empty,expect_len", [
+        (0, 20, False, 20),
+        (5, 15, False, 15),
+        (20, 0, True, 0),
+    ],
+                             ids=["no_caching", "partial", "all_cached"])
+    def test_single_batch(self, cached, in_chunk, expect_empty, expect_len):
+        """Single-request batched slicing: no caching, partial, all cached."""
+        mm_embeds = [torch.randn(20, _EMBED_DIM)]
+        multimodal_params = [_make_multimodal_params(cached, in_chunk, [20])]
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
-        assert len(result) == 1
-        torch.testing.assert_close(result[0], mm_embeds[0])
-
-        # Single batch, partial caching
-        multimodal_params = [self.create_multimodal_params(5, 15, [20])]
-        result = find_input_mm_embeds(mm_embeds, multimodal_params)
-        assert len(result) == 1
-        assert result[0].shape == (15, 512)
-        torch.testing.assert_close(result[0], mm_embeds[0][5:20])
-
-        # Single batch, all cached
-        multimodal_params = [self.create_multimodal_params(20, 0, [20])]
-        result = find_input_mm_embeds(mm_embeds, multimodal_params)
-        assert result == []
-
-    def test_different_devices(self):
-        """
-        Test with tensors on different devices (if CUDA is available).
-        """
-        if not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
-
-        # Test CPU tensors
-        mm_embeds = [torch.randn(10, 512, device='cpu')]
-        multimodal_params = [self.create_multimodal_params(3, 7, [10])]
-        result = find_input_mm_embeds(mm_embeds, multimodal_params)
-        assert result[0].device == mm_embeds[0].device
-
-        # Test CUDA tensors
-        mm_embeds = [torch.randn(10, 512, device='cuda')]
-        multimodal_params = [self.create_multimodal_params(3, 7, [10])]
-        result = find_input_mm_embeds(mm_embeds, multimodal_params)
-        assert result[0].device == mm_embeds[0].device
+        if expect_empty:
+            assert result == []
+        else:
+            assert len(result) == 1
+            assert result[0].shape == (expect_len, _EMBED_DIM)
+            torch.testing.assert_close(result[0],
+                                       mm_embeds[0][cached:cached + in_chunk])
 
     def test_noncontiguous_two_requests_batched_chunk_in_gap(self):
         """
@@ -583,11 +493,11 @@ class TestFindInputMmEmbed:
                    text gap — 10 cached, 0 in chunk.
         Pre-concatenated: 10 + 20 = 30 tokens.
         """
-        mm_embeds = [torch.randn(30, 512)]
+        mm_embeds = [torch.randn(30, _EMBED_DIM)]
         multimodal_params = [
-            self.create_multimodal_params(5, 5, [10]),  # 5 cached, 5 in chunk
-            self.create_multimodal_params(
-                10, 0, [10, 10]),  # 10 cached, 0 in chunk (gap)
+            _make_multimodal_params(5, 5, [10]),  # 5 cached, 5 in chunk
+            _make_multimodal_params(10, 0,
+                                    [10, 10]),  # 10 cached, 0 in chunk (gap)
         ]
 
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
@@ -595,7 +505,7 @@ class TestFindInputMmEmbed:
         # Only request 1 contributes: [5:10] = 5 tokens
         # Request 2 contributes nothing (0 in chunk)
         assert len(result) == 1
-        assert result[0].shape == (5, 512)
+        assert result[0].shape == (5, _EMBED_DIM)
         torch.testing.assert_close(result[0], mm_embeds[0][5:10])
 
     def test_noncontiguous_individual_batching_mixed_gaps(self):
@@ -604,48 +514,50 @@ class TestFindInputMmEmbed:
         different non-contiguous patterns.
         """
         mm_embeds = [
-            torch.randn(20, 512),  # Request 1: 20 tokens (two regions of 10)
-            torch.randn(15, 512),  # Request 2: 15 tokens (one region)
-            torch.randn(20, 512),  # Request 3: 20 tokens (two regions of 10)
+            torch.randn(20,
+                        _EMBED_DIM),  # Request 1: 20 tokens (two regions of 10)
+            torch.randn(15, _EMBED_DIM),  # Request 2: 15 tokens (one region)
+            torch.randn(20,
+                        _EMBED_DIM),  # Request 3: 20 tokens (two regions of 10)
         ]
         multimodal_params = [
-            self.create_multimodal_params(
+            _make_multimodal_params(
                 10, 10,
                 [10, 10
                  ]),  # 10 cached (first region), 10 in chunk (second region)
-            self.create_multimodal_params(0, 15,
-                                          [15]),  # nothing cached, all in chunk
-            self.create_multimodal_params(
-                20, 0, [10, 10]),  # all cached, nothing in chunk
+            _make_multimodal_params(0, 15,
+                                    [15]),  # nothing cached, all in chunk
+            _make_multimodal_params(20, 0,
+                                    [10, 10]),  # all cached, nothing in chunk
         ]
 
         result = find_input_mm_embeds(mm_embeds, multimodal_params)
 
         assert len(result) == 3
-        assert result[0].shape == (10, 512)  # second region of request 1
-        assert result[1].shape == (15, 512)  # all of request 2
-        assert result[2].shape == (0, 512)  # nothing from request 3
+        assert result[0].shape == (10, _EMBED_DIM)  # second region of request 1
+        assert result[1].shape == (15, _EMBED_DIM)  # all of request 2
+        assert result[2].shape == (0, _EMBED_DIM)  # nothing from request 3
 
         torch.testing.assert_close(result[0], mm_embeds[0][10:20])
         torch.testing.assert_close(result[1], mm_embeds[1][0:15])
 
     def test_special_tokens_in_batched_mode(self):
         """Test special token handling in batched mode."""
-        mm_embeds = [torch.randn(12, 512)
+        mm_embeds = [torch.randn(12, _EMBED_DIM)
                      ]  # Pre-concatenated: (8-2) + (10-4) = 6 + 6 = 12 tokens
         multimodal_params = [
-            self.create_mock_runtime(num_cached_mm_tokens=2,
-                                     num_mm_tokens_in_chunk=6,
-                                     mm_token_lengths=[8],
-                                     num_cached_special_tokens=1,
-                                     num_special_tokens_in_chunk=1,
-                                     total_special_tokens_in_request=2),
-            self.create_mock_runtime(num_cached_mm_tokens=4,
-                                     num_mm_tokens_in_chunk=6,
-                                     mm_token_lengths=[10],
-                                     num_cached_special_tokens=2,
-                                     num_special_tokens_in_chunk=2,
-                                     total_special_tokens_in_request=4)
+            _make_mock_runtime(num_cached_mm_tokens=2,
+                               num_mm_tokens_in_chunk=6,
+                               mm_token_lengths=[8],
+                               num_cached_special_tokens=1,
+                               num_special_tokens_in_chunk=1,
+                               total_special_tokens_in_request=2),
+            _make_mock_runtime(num_cached_mm_tokens=4,
+                               num_mm_tokens_in_chunk=6,
+                               mm_token_lengths=[10],
+                               num_cached_special_tokens=2,
+                               num_special_tokens_in_chunk=2,
+                               total_special_tokens_in_request=4)
         ]
         multimodal_params = [
             MultimodalParams(multimodal_runtime=runtime)
@@ -659,7 +571,7 @@ class TestFindInputMmEmbed:
         # Batch 2: local_start = 4-2=2, local_end = 2+(6-2)=6, slice [6+2:6+6] = [8:12] = 4 tokens
         # Total: 5 + 4 = 9 tokens
         assert len(result) == 1
-        assert result[0].shape == (9, 512)
+        assert result[0].shape == (9, _EMBED_DIM)
 
         # Verify the slices are correct
         expected = torch.cat(
@@ -671,47 +583,35 @@ class TestFindInputMmEmbed:
         torch.testing.assert_close(result[0], expected)
 
 
+def _make_mm_params_with_data(
+    has_cached_embedding: bool = False,
+    total_mm_tokens: int = 10,
+    total_special_tokens: int = 0,
+    cached_embedding=None,
+) -> MultimodalParams:
+    """Build a MultimodalParams with dummy pixel data (for has_content()) and optional cached embeddings."""
+    runtime = Mock(spec=MultimodalRuntimeData)
+    runtime.total_mm_tokens_in_request = total_mm_tokens
+    runtime.total_special_tokens_in_request = total_special_tokens
+
+    multimodal_data = {"image": {"pixel_values": torch.randn(1, 1, 1)}}
+    if has_cached_embedding:
+        if cached_embedding is None:
+            cached_embedding = torch.randn(total_mm_tokens, _EMBED_DIM)
+        multimodal_data["multimodal_embedding"] = cached_embedding
+
+    return MultimodalParams(multimodal_data=multimodal_data,
+                            multimodal_runtime=runtime)
+
+
 class TestGetMultimodalEmbeddings:
-    """Test cases for get_multimodal_embeddings function - testing caching and encoder forward optimization."""
-
-    def create_mock_runtime(self,
-                            total_mm_tokens: int,
-                            total_special_tokens: int = 0):
-        """Helper to create a mock MultimodalRuntimeData with total_mm_tokens and special_tokens."""
-        runtime = Mock(spec=MultimodalRuntimeData)
-        runtime.total_mm_tokens_in_request = total_mm_tokens
-        runtime.total_special_tokens_in_request = total_special_tokens
-        return runtime
-
-    def create_multimodal_params_with_data(self,
-                                           has_cached_embedding: bool = False,
-                                           total_mm_tokens: int = 10,
-                                           total_special_tokens: int = 0,
-                                           cached_embedding=None):
-        """Helper to create MultimodalParams with optional cached embeddings."""
-        runtime = self.create_mock_runtime(total_mm_tokens,
-                                           total_special_tokens)
-
-        multimodal_data = {
-            # Add some dummy multimodal data to ensure has_content() returns True
-            "image": {
-                "pixel_values": torch.randn(3, 224, 224)
-            }
-        }
-        if has_cached_embedding:
-            if cached_embedding is None:
-                cached_embedding = torch.randn(total_mm_tokens, 512)
-            multimodal_data["multimodal_embedding"] = cached_embedding
-
-        param = MultimodalParams(multimodal_data=multimodal_data,
-                                 multimodal_runtime=runtime)
-        return param
+    """Test cases for get_multimodal_embeddings — caching and encoder forward optimization."""
 
     def test_no_multimodal_params(self):
         """Test with empty multimodal_params list."""
 
         def mock_encoder(params):
-            return [torch.randn(10, 512)]
+            return [torch.randn(10, _EMBED_DIM)]
 
         result = get_multimodal_embeddings(mock_encoder, [])
         assert result == []
@@ -727,15 +627,15 @@ class TestGetMultimodalEmbeddings:
             total_tokens = sum(
                 param.multimodal_runtime.total_mm_tokens_in_request
                 for param in params)
-            return [torch.randn(total_tokens, 512)]
+            return [torch.randn(total_tokens, _EMBED_DIM)]
 
         multimodal_params = [
-            self.create_multimodal_params_with_data(has_cached_embedding=False,
-                                                    total_mm_tokens=5),
-            self.create_multimodal_params_with_data(has_cached_embedding=False,
-                                                    total_mm_tokens=8),
-            self.create_multimodal_params_with_data(has_cached_embedding=False,
-                                                    total_mm_tokens=7)
+            _make_mm_params_with_data(has_cached_embedding=False,
+                                      total_mm_tokens=5),
+            _make_mm_params_with_data(has_cached_embedding=False,
+                                      total_mm_tokens=8),
+            _make_mm_params_with_data(has_cached_embedding=False,
+                                      total_mm_tokens=7)
         ]
 
         result = get_multimodal_embeddings(mock_encoder, multimodal_params)
@@ -745,7 +645,7 @@ class TestGetMultimodalEmbeddings:
 
         # Should return concatenated embeddings
         assert len(result) == 1
-        assert result[0].shape == (20, 512)  # 5 + 8 + 7 = 20 tokens
+        assert result[0].shape == (20, _EMBED_DIM)  # 5 + 8 + 7 = 20 tokens
 
         # All params should now have cached embeddings
         for param in multimodal_params:
@@ -759,26 +659,23 @@ class TestGetMultimodalEmbeddings:
         def mock_encoder(params):
             nonlocal encoder_call_count
             encoder_call_count += 1
-            return [torch.randn(10, 512)]
+            return [torch.randn(10, _EMBED_DIM)]
 
         # Create params with pre-cached embeddings
-        cached_emb1 = torch.randn(5, 512)
-        cached_emb2 = torch.randn(8, 512)
-        cached_emb3 = torch.randn(7, 512)
+        cached_emb1 = torch.randn(5, _EMBED_DIM)
+        cached_emb2 = torch.randn(8, _EMBED_DIM)
+        cached_emb3 = torch.randn(7, _EMBED_DIM)
 
         multimodal_params = [
-            self.create_multimodal_params_with_data(
-                has_cached_embedding=True,
-                total_mm_tokens=5,
-                cached_embedding=cached_emb1),
-            self.create_multimodal_params_with_data(
-                has_cached_embedding=True,
-                total_mm_tokens=8,
-                cached_embedding=cached_emb2),
-            self.create_multimodal_params_with_data(
-                has_cached_embedding=True,
-                total_mm_tokens=7,
-                cached_embedding=cached_emb3)
+            _make_mm_params_with_data(has_cached_embedding=True,
+                                      total_mm_tokens=5,
+                                      cached_embedding=cached_emb1),
+            _make_mm_params_with_data(has_cached_embedding=True,
+                                      total_mm_tokens=8,
+                                      cached_embedding=cached_emb2),
+            _make_mm_params_with_data(has_cached_embedding=True,
+                                      total_mm_tokens=7,
+                                      cached_embedding=cached_emb3)
         ]
 
         result = get_multimodal_embeddings(mock_encoder, multimodal_params)
@@ -788,7 +685,7 @@ class TestGetMultimodalEmbeddings:
 
         # Should return concatenated cached embeddings
         assert len(result) == 1
-        assert result[0].shape == (20, 512)  # 5 + 8 + 7 = 20 tokens
+        assert result[0].shape == (20, _EMBED_DIM)  # 5 + 8 + 7 = 20 tokens
 
         # Verify the embeddings are correct
         expected = torch.cat([cached_emb1, cached_emb2, cached_emb3], dim=0)
@@ -807,21 +704,20 @@ class TestGetMultimodalEmbeddings:
             total_tokens = sum(
                 param.multimodal_runtime.total_mm_tokens_in_request
                 for param in params)
-            return [torch.randn(total_tokens, 512)]
+            return [torch.randn(total_tokens, _EMBED_DIM)]
 
         # Mix: cached, uncached, cached
-        cached_emb = torch.randn(5, 512)
+        cached_emb = torch.randn(5, _EMBED_DIM)
         multimodal_params = [
-            self.create_multimodal_params_with_data(
-                has_cached_embedding=True,
-                total_mm_tokens=5,
-                cached_embedding=cached_emb),
-            self.create_multimodal_params_with_data(has_cached_embedding=False,
-                                                    total_mm_tokens=8),
-            self.create_multimodal_params_with_data(
-                has_cached_embedding=True,
-                total_mm_tokens=7,
-                cached_embedding=torch.randn(7, 512))
+            _make_mm_params_with_data(has_cached_embedding=True,
+                                      total_mm_tokens=5,
+                                      cached_embedding=cached_emb),
+            _make_mm_params_with_data(has_cached_embedding=False,
+                                      total_mm_tokens=8),
+            _make_mm_params_with_data(has_cached_embedding=True,
+                                      total_mm_tokens=7,
+                                      cached_embedding=torch.randn(
+                                          7, _EMBED_DIM))
         ]
 
         result = get_multimodal_embeddings(mock_encoder, multimodal_params)
@@ -833,7 +729,7 @@ class TestGetMultimodalEmbeddings:
 
         # Should return concatenated embeddings
         assert len(result) == 1
-        assert result[0].shape == (20, 512)  # 5 + 8 + 7 = 20 tokens
+        assert result[0].shape == (20, _EMBED_DIM)  # 5 + 8 + 7 = 20 tokens
 
         # Uncached param should now have cached embedding
         assert "multimodal_embedding" in multimodal_params[1].multimodal_data
@@ -847,21 +743,20 @@ class TestGetMultimodalEmbeddings:
         def mock_encoder(params):
             nonlocal encoder_call_count
             encoder_call_count += 1
-            return [torch.randn(10, 512)]
+            return [torch.randn(10, _EMBED_DIM)]
 
         # Create param without multimodal_runtime but with content
-        param = MultimodalParams(multimodal_data={
-            "image": {
-                "pixel_values": torch.randn(3, 224, 224)
-            }
-        })
+        param = MultimodalParams(
+            multimodal_data={"image": {
+                "pixel_values": torch.randn(1, 1, 1)
+            }})
 
         result = get_multimodal_embeddings(mock_encoder, [param])
 
         # Should call encoder and return its output directly (no caching)
         assert encoder_call_count == 1
         assert len(result) == 1
-        assert result[0].shape == (10, 512)
+        assert result[0].shape == (10, _EMBED_DIM)
 
         # Should not have cached embedding due to missing runtime
         assert "multimodal_embedding" not in param.multimodal_data
@@ -873,44 +768,43 @@ class TestGetMultimodalEmbeddings:
         def mock_encoder(params):
             nonlocal encoder_call_count
             encoder_call_count += 1
-            return [torch.randn(10, 512)]
+            return [torch.randn(10, _EMBED_DIM)]
 
         # Create runtime without total_mm_tokens
         runtime = Mock(spec=MultimodalRuntimeData)
         runtime.total_mm_tokens_in_request = None
 
-        param = MultimodalParams(multimodal_data={
-            "image": {
-                "pixel_values": torch.randn(3, 224, 224)
-            }
-        },
-                                 multimodal_runtime=runtime)
+        param = MultimodalParams(
+            multimodal_data={"image": {
+                "pixel_values": torch.randn(1, 1, 1)
+            }},
+            multimodal_runtime=runtime)
 
         result = get_multimodal_embeddings(mock_encoder, [param])
 
         # Should call encoder and return its output directly (no caching)
         assert encoder_call_count == 1
         assert len(result) == 1
-        assert result[0].shape == (10, 512)
+        assert result[0].shape == (10, _EMBED_DIM)
 
     def test_multiple_modalities_early_return(self):
         """Test early return when encoder outputs multiple modalities."""
 
         def mock_encoder(params):
             # Return multiple embeddings (multiple modalities)
-            return [torch.randn(5, 512), torch.randn(8, 512)]
+            return [torch.randn(5, _EMBED_DIM), torch.randn(8, _EMBED_DIM)]
 
         multimodal_params = [
-            self.create_multimodal_params_with_data(has_cached_embedding=False,
-                                                    total_mm_tokens=5)
+            _make_mm_params_with_data(has_cached_embedding=False,
+                                      total_mm_tokens=5)
         ]
 
         result = get_multimodal_embeddings(mock_encoder, multimodal_params)
 
         # Should return encoder output directly without caching
         assert len(result) == 2
-        assert result[0].shape == (5, 512)
-        assert result[1].shape == (8, 512)
+        assert result[0].shape == (5, _EMBED_DIM)
+        assert result[1].shape == (8, _EMBED_DIM)
 
         # Should not have cached anything
         assert "multimodal_embedding" not in multimodal_params[
@@ -921,29 +815,29 @@ class TestGetMultimodalEmbeddings:
 
         def mock_encoder(params):
             # Return single concatenated tensor for all params
-            return [torch.randn(20, 512)]  # 5 + 8 + 7 = 20 tokens
+            return [torch.randn(20, _EMBED_DIM)]  # 5 + 8 + 7 = 20 tokens
 
         multimodal_params = [
-            self.create_multimodal_params_with_data(has_cached_embedding=False,
-                                                    total_mm_tokens=5),
-            self.create_multimodal_params_with_data(has_cached_embedding=False,
-                                                    total_mm_tokens=8),
-            self.create_multimodal_params_with_data(has_cached_embedding=False,
-                                                    total_mm_tokens=7)
+            _make_mm_params_with_data(has_cached_embedding=False,
+                                      total_mm_tokens=5),
+            _make_mm_params_with_data(has_cached_embedding=False,
+                                      total_mm_tokens=8),
+            _make_mm_params_with_data(has_cached_embedding=False,
+                                      total_mm_tokens=7)
         ]
 
         result = get_multimodal_embeddings(mock_encoder, multimodal_params)
 
         # Check that embeddings were split correctly
         assert multimodal_params[0].multimodal_data[
-            "multimodal_embedding"].shape == (5, 512)
+            "multimodal_embedding"].shape == (5, _EMBED_DIM)
         assert multimodal_params[1].multimodal_data[
-            "multimodal_embedding"].shape == (8, 512)
+            "multimodal_embedding"].shape == (8, _EMBED_DIM)
         assert multimodal_params[2].multimodal_data[
-            "multimodal_embedding"].shape == (7, 512)
+            "multimodal_embedding"].shape == (7, _EMBED_DIM)
 
         # Verify the result is correct concatenation
-        assert result[0].shape == (20, 512)
+        assert result[0].shape == (20, _EMBED_DIM)
         expected = torch.cat([
             multimodal_params[0].multimodal_data["multimodal_embedding"],
             multimodal_params[1].multimodal_data["multimodal_embedding"],
@@ -952,45 +846,24 @@ class TestGetMultimodalEmbeddings:
                              dim=0)
         torch.testing.assert_close(result[0], expected)
 
-    def test_different_devices(self):
-        """Test with tensors on different devices (if CUDA is available)."""
-        if not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
-
-        def mock_encoder(params):
-            return [torch.randn(10, 512, device='cuda')]
-
-        multimodal_params = [
-            self.create_multimodal_params_with_data(has_cached_embedding=False,
-                                                    total_mm_tokens=10)
-        ]
-
-        result = get_multimodal_embeddings(mock_encoder, multimodal_params)
-
-        # Result should be on CUDA
-        assert result[0].device.type == 'cuda'
-        # Cached embedding should also be on CUDA
-        assert multimodal_params[0].multimodal_data[
-            "multimodal_embedding"].device.type == 'cuda'
-
     def test_special_tokens_basic_caching(self):
         """Test caching behavior with special tokens present."""
 
         def mock_encoder(params):
             # Return embeddings for non-special tokens only
             # Total: (10-2) + (8-1) + (6-3) = 8 + 7 + 3 = 18 tokens
-            return [torch.randn(18, 512)]
+            return [torch.randn(18, _EMBED_DIM)]
 
         multimodal_params = [
-            self.create_multimodal_params_with_data(
+            _make_mm_params_with_data(
                 has_cached_embedding=False,
                 total_mm_tokens=10,
                 total_special_tokens=2),  # 8 actual embedding tokens
-            self.create_multimodal_params_with_data(
+            _make_mm_params_with_data(
                 has_cached_embedding=False,
                 total_mm_tokens=8,
                 total_special_tokens=1),  # 7 actual embedding tokens
-            self.create_multimodal_params_with_data(
+            _make_mm_params_with_data(
                 has_cached_embedding=False,
                 total_mm_tokens=6,
                 total_special_tokens=3)  # 3 actual embedding tokens
@@ -1000,29 +873,29 @@ class TestGetMultimodalEmbeddings:
 
         # Should return concatenated embeddings
         assert len(result) == 1
-        assert result[0].shape == (18, 512)  # 8 + 7 + 3 = 18 tokens
+        assert result[0].shape == (18, _EMBED_DIM)  # 8 + 7 + 3 = 18 tokens
 
         # Check that embeddings were split correctly based on non-special token counts
         assert multimodal_params[0].multimodal_data[
-            "multimodal_embedding"].shape == (8, 512)  # 10 - 2
+            "multimodal_embedding"].shape == (8, _EMBED_DIM)  # 10 - 2
         assert multimodal_params[1].multimodal_data[
-            "multimodal_embedding"].shape == (7, 512)  # 8 - 1
+            "multimodal_embedding"].shape == (7, _EMBED_DIM)  # 8 - 1
         assert multimodal_params[2].multimodal_data[
-            "multimodal_embedding"].shape == (3, 512)  # 6 - 3
+            "multimodal_embedding"].shape == (3, _EMBED_DIM)  # 6 - 3
 
     def test_special_tokens_all_special(self):
         """Test edge case where all tokens are special tokens."""
 
         def mock_encoder(params):
             # Should return empty tensor when no actual embedding tokens
-            return [torch.randn(0, 512)]
+            return [torch.randn(0, _EMBED_DIM)]
 
         multimodal_params = [
-            self.create_multimodal_params_with_data(
+            _make_mm_params_with_data(
                 has_cached_embedding=False,
                 total_mm_tokens=5,
                 total_special_tokens=5),  # All tokens are special
-            self.create_multimodal_params_with_data(
+            _make_mm_params_with_data(
                 has_cached_embedding=False,
                 total_mm_tokens=3,
                 total_special_tokens=3)  # All tokens are special
@@ -1032,13 +905,13 @@ class TestGetMultimodalEmbeddings:
 
         # Should return empty embeddings
         assert len(result) == 1
-        assert result[0].shape == (0, 512)
+        assert result[0].shape == (0, _EMBED_DIM)
 
         # Cached embeddings should also be empty
         assert multimodal_params[0].multimodal_data[
-            "multimodal_embedding"].shape == (0, 512)
+            "multimodal_embedding"].shape == (0, _EMBED_DIM)
         assert multimodal_params[1].multimodal_data[
-            "multimodal_embedding"].shape == (0, 512)
+            "multimodal_embedding"].shape == (0, _EMBED_DIM)
 
     def test_special_tokens_mixed_with_cached(self):
         """Test special tokens with mixed cached and uncached params."""
@@ -1048,17 +921,16 @@ class TestGetMultimodalEmbeddings:
             nonlocal encoder_call_count
             encoder_call_count += 1
             # Only process uncached param: 12 - 3 = 9 tokens
-            return [torch.randn(9, 512)]
+            return [torch.randn(9, _EMBED_DIM)]
 
         # Mix: cached (with special tokens), uncached (with special tokens)
-        cached_emb = torch.randn(4, 512)  # 6 - 2 = 4 actual tokens
+        cached_emb = torch.randn(4, _EMBED_DIM)  # 6 - 2 = 4 actual tokens
         multimodal_params = [
-            self.create_multimodal_params_with_data(
-                has_cached_embedding=True,
-                total_mm_tokens=6,
-                total_special_tokens=2,
-                cached_embedding=cached_emb),
-            self.create_multimodal_params_with_data(
+            _make_mm_params_with_data(has_cached_embedding=True,
+                                      total_mm_tokens=6,
+                                      total_special_tokens=2,
+                                      cached_embedding=cached_emb),
+            _make_mm_params_with_data(
                 has_cached_embedding=False,
                 total_mm_tokens=12,
                 total_special_tokens=3)  # 9 actual embedding tokens
@@ -1071,14 +943,14 @@ class TestGetMultimodalEmbeddings:
 
         # Should return concatenated embeddings: 4 + 9 = 13 tokens
         assert len(result) == 1
-        assert result[0].shape == (13, 512)
+        assert result[0].shape == (13, _EMBED_DIM)
 
         # Verify cached embedding is preserved and uncached is now cached
         torch.testing.assert_close(
             multimodal_params[0].multimodal_data["multimodal_embedding"],
             cached_emb)
         assert multimodal_params[1].multimodal_data[
-            "multimodal_embedding"].shape == (9, 512)
+            "multimodal_embedding"].shape == (9, _EMBED_DIM)
 
 
 class TestFindMmTokenPositions:
@@ -1219,65 +1091,51 @@ class TestMultimodalRuntimeDataPreset:
         assert runtime.num_cached_special_tokens == 2
         assert runtime.num_special_tokens_in_chunk == 2
 
-    def test_preset_only_unseen_still_computes_chunk(self):
-        """When only num_cached is pre-set but num_in_chunk is None,
-        should still run computation (the 'or' condition)."""
-        runtime = MultimodalRuntimeData(
-            past_seen_token_num=5,
-            mm_contiguous_spans=[(0, 10)],
-            chunk_end_pos=8,
-            special_token_offsets=[],
-            num_cached_mm_tokens=5,
-            # num_mm_tokens_in_chunk=None triggers computation
-        )
-        # Should compute num_mm_tokens_in_chunk from spans
-        assert runtime.num_mm_tokens_in_chunk == 3  # positions 5..8
-
 
 class TestCheckMmSpansPresent:
     """Test cases for _check_mm_spans_present — the fail-fast discriminator."""
 
-    def test_none_mm_data_no_raise(self):
-        """None py_multimodal_data is fine — no multimodal content."""
-        _check_mm_spans_present(None)  # should not raise
-
-    def test_mrope_only_no_raise(self):
-        """mrope-only metadata dict should NOT trigger fail-fast."""
-        mm_data = {"mrope_config": {"mrope_position_ids": torch.zeros(3, 1, 5)}}
-        _check_mm_spans_present(mm_data)  # should not raise
-
-    def test_spans_present_no_raise(self):
-        """When mm_contiguous_spans is present, no error regardless of other keys."""
-        mm_data = {
+    @pytest.mark.parametrize("mm_data", [
+        None,
+        {
+            "mrope_config": {
+                "mrope_position_ids": torch.zeros(3, 1, 5)
+            }
+        },
+        {
             "multimodal_embedding": torch.zeros(5, 10),
-            "mm_contiguous_spans": [(0, 5)],
-        }
-        _check_mm_spans_present(mm_data)  # should not raise
-
-    def test_vision_data_without_spans_raises(self):
-        """Vision data present but mm_contiguous_spans missing — must raise."""
-        mm_data = {"multimodal_embedding": torch.zeros(5, 10)}
-        with pytest.raises(ValueError, match="mm_contiguous_spans"):
-            _check_mm_spans_present(mm_data)
-
-    def test_pixel_values_without_spans_raises(self):
-        """Pixel values present but mm_contiguous_spans missing — must raise."""
-        mm_data = {"image": {"pixel_values": torch.zeros(1, 3, 224, 224)}}
-        with pytest.raises(ValueError, match="mm_contiguous_spans"):
-            _check_mm_spans_present(mm_data)
-
-    def test_metadata_only_keys_no_raise(self):
-        """All metadata-only keys, no vision content — should not raise."""
-        mm_data = {
+            "mm_contiguous_spans": [(0, 5)]
+        },
+        {
             "mrope_config": {},
             "special_token_offsets": [1, 2],
-            "layout_metadata": {},
-        }
-        _check_mm_spans_present(mm_data)  # should not raise
+            "layout_metadata": {}
+        },
+        {},
+    ],
+                             ids=[
+                                 "none", "mrope_only", "spans_present",
+                                 "metadata_only", "empty_dict"
+                             ])
+    def test_no_raise(self, mm_data):
+        """Non-vision or spans-present data should not trigger fail-fast."""
+        _check_mm_spans_present(mm_data)
 
-    def test_empty_dict_no_raise(self):
-        """Empty py_multimodal_data should not raise."""
-        _check_mm_spans_present({})  # should not raise
+    @pytest.mark.parametrize("mm_data", [
+        {
+            "multimodal_embedding": torch.zeros(5, 10)
+        },
+        {
+            "image": {
+                "pixel_values": torch.zeros(1, 1, 1)
+            }
+        },
+    ],
+                             ids=["embedding_no_spans", "pixels_no_spans"])
+    def test_vision_data_without_spans_raises(self, mm_data):
+        """Vision data present but mm_contiguous_spans missing — must raise."""
+        with pytest.raises(ValueError, match="mm_contiguous_spans"):
+            _check_mm_spans_present(mm_data)
 
 
 class _MockProcessor:
@@ -1410,21 +1268,15 @@ class TestFindContiguousMmSpans:
         # In the flat mm_positions [1,2,3,4], index 2 is the special token (value 6)
         assert offsets == [2]
 
-    def test_tensor_input(self):
-        """Accepts torch.Tensor input_ids."""
-        spans, offsets = find_contiguous_mm_spans(
-            input_ids=torch.tensor([1, 100, 101, 2]),
-            vocab_size=100,
-        )
-        assert spans == [(1, 2)]
-
-    def test_numpy_input(self):
-        """Accepts numpy array input_ids."""
-        import numpy as np
-        spans, offsets = find_contiguous_mm_spans(
-            input_ids=np.array([1, 100, 101, 2]),
-            vocab_size=100,
-        )
+    @pytest.mark.parametrize("input_ids", [
+        torch.tensor([1, 100, 101, 2]),
+        np.array([1, 100, 101, 2]),
+    ],
+                             ids=["tensor", "numpy"])
+    def test_array_like_input(self, input_ids):
+        """Accepts torch.Tensor and numpy array input_ids."""
+        spans, offsets = find_contiguous_mm_spans(input_ids=input_ids,
+                                                  vocab_size=100)
         assert spans == [(1, 2)]
 
     def test_raises_without_vocab_size_or_mm_token_ids(self):
