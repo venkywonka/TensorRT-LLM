@@ -237,10 +237,6 @@ class BaseMultimodalInputProcessor(ABC):
             "Please override this method to provide the vocabulary size. ")
         return None
 
-    # Config attribute names that hold a single multimodal token id on common
-    # HF VLM configs (Gemma3: ``image_token_index``, LLaVA: ``image_token_index``,
-    # Qwen2/2.5/3-VL: ``image_token_id``/``video_token_id``, etc.). Ordered so
-    # the first hit wins; the final list is de-duplicated before returning.
     _MM_TOKEN_ID_CONFIG_ATTRS: Tuple[str, ...] = (
         "image_token_id",
         "image_token_index",
@@ -256,16 +252,8 @@ class BaseMultimodalInputProcessor(ABC):
         The token IDs filtered by this method should be contiguous for each logical multimodal unit, i.e. special tokens if any should be included.
 
         Resolution order:
-        1) ``self.processor.mm_token_ids`` when the HF processor exposes a
-           non-None value. A bare ``hasattr`` is insufficient because some
-           processors declare ``mm_token_ids = None`` as a sentinel for
-           "not supported" — treating that as a hit would hide the config
-           fallback and reintroduce the silent-skip this method exists to
-           prevent.
-        2) Single-token ids harvested from ``self.config`` (``image_token_id``,
-           ``image_token_index``, ``video_token_id`` …). Works for every
-           VLM config we currently support and keeps the hashing / span-finding
-           path functional when the processor lacks ``mm_token_ids``.
+        1) self.processor.mm_token_ids (when exposed and non-None).
+        2) Single-token ids from self.config (image_token_id, video_token_id, ...).
         """
         processor_ids = getattr(self.processor, "mm_token_ids", None)
         if processor_ids is not None:
@@ -278,10 +266,6 @@ class BaseMultimodalInputProcessor(ABC):
                 continue
             if isinstance(value, int):
                 config_ids.append(value)
-            elif isinstance(value, torch.Tensor) and value.ndim == 0:
-                config_ids.append(int(value.item()))
-        # De-duplicate while preserving encounter order (tensor order is not
-        # meaningful for set-membership checks in find_contiguous_mm_spans).
         seen = set()
         unique_ids = [i for i in config_ids if not (i in seen or seen.add(i))]
         if unique_ids:

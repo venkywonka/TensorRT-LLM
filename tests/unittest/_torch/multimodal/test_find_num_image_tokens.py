@@ -46,10 +46,6 @@ def multimodal_model_configs():
         },
         'qwen3-vl': {
             'hf_model_dir': 'Qwen/Qwen3-VL-8B-Instruct',
-            # LLM_MODELS_ROOT stores Qwen3 VLMs under a ``Qwen3/`` subdir
-            # (matches test_mm_encoder_standalone._QWEN_3_VL_DIR); the root
-            # also has a flat ``Qwen3-VL-8B-Instruct`` symlink in some CI
-            # snapshots whose config.json is stale and fails AutoConfig.
             'model_dir': llm_models_root() / "Qwen3" / "Qwen3-VL-8B-Instruct",
             'model_type': 'qwen3_vl',
         },

@@ -1217,12 +1217,7 @@ class TestEnsureMmContiguousSpans:
 
 
 class _ConcreteInputProcessor(BaseMultimodalInputProcessor):
-    """Concrete BaseMultimodalInputProcessor used to drive the metadata helpers.
-
-    The full class requires ``processor``, ``tokenizer``, ``config`` and
-    ``dtype`` overrides plus a ``__call__`` — we only exercise the
-    vocab / mm-token-id lookup helpers, so the rest are stubbed.
-    """
+    """Minimal concrete BaseMultimodalInputProcessor for driving the metadata helpers."""
 
     def __init__(self, *, config, tokenizer=None, processor=None):
         self._config = config
@@ -1252,22 +1247,10 @@ class _ConcreteInputProcessor(BaseMultimodalInputProcessor):
 
 
 class TestBaseMultimodalInputProcessorTokenLookup:
-    """Cover get_mm_token_ids resolution for processors that lack
-    ``processor.mm_token_ids`` — the CI failure mode from PR #12944.
-
-    The regression was: when HF AutoProcessor does not expose ``mm_token_ids``
-    (e.g. Gemma3Processor) and the tokenizer's vocab_size resolver returns
-    None in CI, both get_vocab_size() and get_mm_token_ids() returned None,
-    compute_mm_contiguous_spans_if_absent silent-skipped, and the gate then
-    fired with ``Request has multimodal data keys {'image'} but no
-    mm_contiguous_spans``.
-
-    The fix makes get_mm_token_ids() fall back to config attributes like
-    ``image_token_index`` so span computation always has an identifier.
-    """
+    """Test cases for BaseMultimodalInputProcessor.get_mm_token_ids resolution."""
 
     def _mock_config(self, **attrs):
-        config = Mock(spec=[])  # spec=[] → only declared attrs exist
+        config = Mock(spec=[])
         for name, value in attrs.items():
             setattr(config, name, value)
         return config
@@ -1281,10 +1264,6 @@ class TestBaseMultimodalInputProcessorTokenLookup:
         assert torch.equal(got, torch.tensor([99]))
 
     def test_processor_mm_token_ids_is_none_falls_through(self):
-        """A processor that declares ``mm_token_ids = None`` as a sentinel
-        for "not supported" must fall through to the config fallback
-        rather than returning None (which would re-create the silent-skip
-        bug this helper is designed to prevent)."""
         processor = Mock(spec=["mm_token_ids"])
         processor.mm_token_ids = None
         config = self._mock_config(image_token_index=262144)
@@ -1294,8 +1273,7 @@ class TestBaseMultimodalInputProcessorTokenLookup:
         assert got.tolist() == [262144]
 
     def test_falls_back_to_config_image_token_index(self):
-        """Gemma3-style: processor lacks mm_token_ids, config has image_token_index."""
-        processor = Mock(spec=[])  # no mm_token_ids attr
+        processor = Mock(spec=[])
         config = self._mock_config(image_token_index=262144)
         ip = _ConcreteInputProcessor(config=config, processor=processor)
         got = ip.get_mm_token_ids()
@@ -1303,7 +1281,6 @@ class TestBaseMultimodalInputProcessorTokenLookup:
         assert got.tolist() == [262144]
 
     def test_falls_back_to_config_image_token_id(self):
-        """Qwen2-VL-style: config exposes image_token_id + video_token_id."""
         processor = Mock(spec=[])
         config = self._mock_config(image_token_id=151655, video_token_id=151656)
         ip = _ConcreteInputProcessor(config=config, processor=processor)
@@ -1312,7 +1289,6 @@ class TestBaseMultimodalInputProcessorTokenLookup:
         assert sorted(got.tolist()) == [151655, 151656]
 
     def test_dedupes_duplicate_token_ids(self):
-        """Some configs set image_token_id == image_token_index — dedupe."""
         processor = Mock(spec=[])
         config = self._mock_config(image_token_id=32000,
                                    image_token_index=32000)
@@ -1322,14 +1298,13 @@ class TestBaseMultimodalInputProcessorTokenLookup:
 
     def test_returns_none_when_no_hint_available(self):
         processor = Mock(spec=[])
-        config = self._mock_config()  # no mm-token attrs at all
+        config = self._mock_config()
         ip = _ConcreteInputProcessor(config=config, processor=processor)
         assert ip.get_mm_token_ids() is None
 
     def test_ignores_bool_attribute_values(self):
-        """`isinstance(True, int)` is True — guard against booleans."""
+        # isinstance(True, int) is True; guard rejects a feature-flag bool.
         processor = Mock(spec=[])
-        # Model where the attribute is a feature flag, not a token id.
         config = self._mock_config(image_token_id=True, image_token_index=None)
         ip = _ConcreteInputProcessor(config=config, processor=processor)
         assert ip.get_mm_token_ids() is None
