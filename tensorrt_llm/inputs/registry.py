@@ -256,14 +256,20 @@ class BaseMultimodalInputProcessor(ABC):
         The token IDs filtered by this method should be contiguous for each logical multimodal unit, i.e. special tokens if any should be included.
 
         Resolution order:
-        1) ``self.processor.mm_token_ids`` when the HF processor exposes it.
+        1) ``self.processor.mm_token_ids`` when the HF processor exposes a
+           non-None value. A bare ``hasattr`` is insufficient because some
+           processors declare ``mm_token_ids = None`` as a sentinel for
+           "not supported" — treating that as a hit would hide the config
+           fallback and reintroduce the silent-skip this method exists to
+           prevent.
         2) Single-token ids harvested from ``self.config`` (``image_token_id``,
            ``image_token_index``, ``video_token_id`` …). Works for every
            VLM config we currently support and keeps the hashing / span-finding
            path functional when the processor lacks ``mm_token_ids``.
         """
-        if hasattr(self.processor, 'mm_token_ids'):
-            return self.processor.mm_token_ids
+        processor_ids = getattr(self.processor, "mm_token_ids", None)
+        if processor_ids is not None:
+            return processor_ids
 
         config_ids: List[int] = []
         for attr in self._MM_TOKEN_ID_CONFIG_ATTRS:

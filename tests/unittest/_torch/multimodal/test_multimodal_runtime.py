@@ -1280,6 +1280,19 @@ class TestBaseMultimodalInputProcessorTokenLookup:
         got = ip.get_mm_token_ids()
         assert torch.equal(got, torch.tensor([99]))
 
+    def test_processor_mm_token_ids_is_none_falls_through(self):
+        """A processor that declares ``mm_token_ids = None`` as a sentinel
+        for "not supported" must fall through to the config fallback
+        rather than returning None (which would re-create the silent-skip
+        bug this helper is designed to prevent)."""
+        processor = Mock(spec=["mm_token_ids"])
+        processor.mm_token_ids = None
+        config = self._mock_config(image_token_index=262144)
+        ip = _ConcreteInputProcessor(config=config, processor=processor)
+        got = ip.get_mm_token_ids()
+        assert got is not None
+        assert got.tolist() == [262144]
+
     def test_falls_back_to_config_image_token_index(self):
         """Gemma3-style: processor lacks mm_token_ids, config has image_token_index."""
         processor = Mock(spec=[])  # no mm_token_ids attr
