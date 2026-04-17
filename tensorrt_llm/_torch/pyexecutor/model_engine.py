@@ -2323,17 +2323,22 @@ class PyTorchModelEngine(ModelEngine):
             num_cached_tokens_per_seq.append(past_seen_token_num)
             request.cached_tokens = num_cached_tokens_per_seq[-1]
 
-            # Multimodal — fail-fast if vision data present but spans missing
+            # Multimodal — fail-fast if multimodal payload present but spans missing
             _check_mm_spans_present(request.py_multimodal_data)
             mm_spans = request.py_multimodal_data.get(
                 'mm_contiguous_spans') if request.py_multimodal_data else None
+            # Gate on multimodal_hashes: Path A (registry.py hashing_process) always
+            # emits spans alongside hashes, so this preserves the pre-decoupling
+            # construction contract. Path B (no hashes) skips runtime data even if
+            # spans are backfilled — that path's downstream embed handling is
+            # orthogonal (tracked separately).
             py_multimodal_runtime = MultimodalRuntimeData(
                 mm_contiguous_spans=mm_spans,
                 past_seen_token_num=past_seen_token_num,
                 chunk_end_pos=end_compute,
                 special_token_offsets=request.py_multimodal_data.get(
                     'special_token_offsets', []),
-            ) if mm_spans is not None else None
+            ) if request.multimodal_hashes is not None else None
 
             multimodal_params = MultimodalParams(
                 multimodal_data=request.py_multimodal_data,
