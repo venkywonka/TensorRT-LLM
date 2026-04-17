@@ -89,9 +89,8 @@ def _check_mm_spans_present(py_multimodal_data: Optional[dict]) -> None:
         return
     mm_keys = set(py_multimodal_data.keys()) - _MM_METADATA_ONLY_KEYS
     if mm_keys:
-        raise ValueError(
-            f"Request has multimodal data keys {mm_keys} but no "
-            "mm_contiguous_spans in py_multimodal_data.")
+        raise ValueError(f"Request has multimodal data keys {mm_keys} but no "
+                         "mm_contiguous_spans in py_multimodal_data.")
 
 
 class ModelEngine(ABC):
