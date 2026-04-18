@@ -2,7 +2,6 @@
 # Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 """Multimodal utilities for handling images and other media types in TensorRT-LLM."""
 
-import bisect
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -134,7 +133,7 @@ class MultimodalRuntimeData:
         past_seen_token_num: Total tokens already processed in previous iterations (cached)
         mm_contiguous_spans: List of (start_position, token_count) per contiguous MM token run
         chunk_end_pos: End position of the current chunk for chunked prefill
-        special_token_offsets: Sorted indices of special tokens in the flat MM token union
+        special_token_offsets: Indices of special tokens in the flat MM token union
 
         num_cached_mm_tokens: Number of MM tokens that are cached (computed)
         num_mm_tokens_in_chunk: Number of MM tokens in the current chunk (computed)
@@ -199,15 +198,17 @@ class MultimodalRuntimeData:
                         self.num_mm_tokens_in_chunk += length
 
         if len(self.special_token_offsets) > 0:
-            # find_contiguous_mm_spans (the sole producer) returns sorted
-            # indices via torch.where, so bisect_left is safe.
-            s = self.special_token_offsets
-            self.num_cached_special_tokens = bisect.bisect_left(
-                s, self.num_cached_mm_tokens)
-            mm_tokens_end_pos = self.num_cached_mm_tokens + self.num_mm_tokens_in_chunk
-            self.num_special_tokens_in_chunk = (
-                bisect.bisect_left(s, mm_tokens_end_pos) -
-                self.num_cached_special_tokens)
+            # O(N) linear scans — correct regardless of offset ordering, which
+            # makes MultimodalRuntimeData safe to construct directly without a
+            # sortedness invariant on the caller.
+            mm_tokens_end_pos = (self.num_cached_mm_tokens +
+                                 self.num_mm_tokens_in_chunk)
+            self.num_cached_special_tokens = sum(
+                1 for offset in self.special_token_offsets
+                if offset < self.num_cached_mm_tokens)
+            self.num_special_tokens_in_chunk = sum(
+                1 for offset in self.special_token_offsets
+                if self.num_cached_mm_tokens <= offset < mm_tokens_end_pos)
 
             self.total_special_tokens_in_request = len(
                 self.special_token_offsets)
