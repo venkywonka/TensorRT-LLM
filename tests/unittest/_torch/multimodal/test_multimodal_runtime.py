@@ -255,14 +255,14 @@ class TestNonContiguousMultimodalRuntimeData:
 class TestNonContiguousWithContiguousSpans:
     """Test cases for MultimodalRuntimeData with multi-group spans.
 
-    These simulate the actual bug: a single video entry where MM tokens are
-    scattered across a wider range than a single (pos, length) due to text gaps
-    (e.g., <vision_end> + timestamp + <vision_start> between temporal groups).
-    With mm_contiguous_spans, each group is its own span so counting is exact.
+    These cover a single video entry whose MM tokens are scattered across a
+    wider range than a single (pos, length) due to text gaps (e.g.,
+    <vision_end> + timestamp + <vision_start> between temporal groups). With
+    mm_contiguous_spans, each group is its own span so counting is exact.
     """
 
     def test_video_three_groups_chunk_hits_first_two(self):
-        """THE bug scenario — video with 3 temporal groups of 196 MM tokens each:
+        """Video with 3 temporal groups of 196 MM tokens each:
         Group1: [10, 206), Gap: [206, 214), Group2: [214, 410), Gap: [410, 418), Group3: [418, 614)
         Total MM tokens: 588. Chunk [0, 256) should contain 196 + 42 = 238 MM tokens.
         """
