@@ -744,18 +744,18 @@ def find_mm_token_lengths(
     *,
     multimodal_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, List[int]]:
-    """Get the token lengths of each logical multimodal unit.
+    """Get the token lengths of each multimodal item.
 
-    Returns the total token count for each logical unit (image or video), including any special tokens
+    Returns the total token count for each item (image or video), including any special tokens
     (e.g., image_begin, image_end, image_break) that may be mixed with the actual
     multimodal content tokens. This mm_token_lengths represents the full chunk from beginning
     to end, not just pure image/video/audio tokens.
 
-    For videos, if ``multimodal_data["video"]["video_grid_thw"]`` is shape-
-    matched against ``mm_data``, each row is forwarded to
-    ``input_processor.get_num_tokens_per_video(video_grid_thw=row)`` so the
-    count is derived without re-running the HF processor. Falls back to
-    calling the method without ``video_grid_thw`` on mismatch / absence.
+    When `multimodal_data["video"]["video_grid_thw"]` is present and its row
+    count matches the number of videos in `mm_data`, each row is forwarded
+    to `input_processor.get_num_tokens_per_video` as a kwarg. Processors are
+    free to use it for a faster token-count computation or to ignore it;
+    falls back to calling the method without the kwarg on mismatch / absence.
     """
 
     mm_items = {

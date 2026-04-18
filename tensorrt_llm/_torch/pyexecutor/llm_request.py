@@ -388,9 +388,9 @@ class PyResult:
 
         Args:
             mm_embeddings: Concatenated multimodal embeddings tensor of shape [total_tokens, hidden_dim]
-            multimodal_lengths: List of token lengths for each logical multimodal unit
+            multimodal_lengths: List of token lengths for each multimodal item
         """
-        # Split the concatenated tensor by lengths to get per-logical-unit embeddings
+        # Split the concatenated tensor by lengths to get per-item embeddings
         split_embeddings = torch.split(mm_embeddings, multimodal_lengths, dim=0)
 
         # Create a SharedTensorContainer handle for each split
@@ -493,7 +493,7 @@ class PyResult:
 
     @property
     def mm_embedding_handles(self) -> List[Dict[str, Any]] | None:
-        """Returns a list of SharedTensorContainer handles, one per logical multimodal unit."""
+        """Returns a list of SharedTensorContainer handles, one per multimodal item."""
         return self._mm_embeddings
 
     @property

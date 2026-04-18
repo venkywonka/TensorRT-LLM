@@ -212,8 +212,9 @@ def _populate_dummy_mrope_config(req: LlmRequest, token_num: int,
     Used by the dummy-request paths in both KVCacheManager and KVCacheManagerV2
     to satisfy models that consume mrope_config (e.g. Qwen2-VL) during warmup.
 
-    TODO: Plan is for each model to provide its own dummy_data. Until then,
-    this helper is the workaround that fabricates mrope_config here.
+    TODO(TRTLLM-12045): each model should provide its own warmup dummy_data
+    via an input-processor hook — this ad-hoc helper is the interim
+    workaround.
     """
     mrope_config: Dict[str, torch.Tensor] = {
         "mrope_position_ids":
