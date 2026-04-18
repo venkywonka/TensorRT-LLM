@@ -355,10 +355,9 @@ l0_h100:
   - accuracy/test_llm_api_pytorch.py::TestStarcoder2_7B::test_auto_dtype
   - accuracy/test_llm_api_pytorch.py::TestStarcoder2_15B::test_auto_dtype
   - test_e2e.py::test_ptp_quickstart_multimodal_kv_cache_reuse[mistral-small-3.1-24b-instruct-Mistral-Small-3.1-24B-Instruct-2503-0.6-image]
-  - test_e2e.py::test_ptp_quickstart_multimodal_chunked_prefill[mistral-small-3.1-24b-instruct-Mistral-Small-3.1-24B-Instruct-2503-0.6-image]
-  - test_e2e.py::test_ptp_quickstart_multimodal_chunked_prefill[qwen3-vl-8b-instruct-Qwen3/Qwen3-VL-8B-Instruct-0.6-video]
-  - test_e2e.py::test_ptp_quickstart_multimodal_chunked_prefill[nemotron-nano-12b-v2-vl-NVIDIA-Nemotron-Nano-12B-v2-VL-BF16-0.6-image]
-  - test_e2e.py::test_ptp_quickstart_multimodal_chunked_prefill[nemotron-nano-12b-v2-vl-NVIDIA-Nemotron-Nano-12B-v2-VL-BF16-0.6-video]
+  - accuracy/test_llm_api_pytorch_multimodal.py::TestMistralSmall24B::test_auto_dtype_chunked_prefill
+  - accuracy/test_llm_api_pytorch_multimodal.py::TestQwen3VL::test_auto_dtype_chunked_prefill
+  - accuracy/test_llm_api_pytorch_multimodal.py::TestNemotron_Nano_12B_V2_VL::test_auto_dtype_chunked_prefill
   - examples/test_mistral.py::test_mistral_with_bf16_lora_torch[mistral-7b-v0.1]
   - examples/test_phi.py::test_phi_4_mini_instruct_with_bf16_lora_torch[Phi-4-mini-instruct]
   - examples/test_llama.py::test_llama_3_x_with_bf16_lora_torch[llama-3.2-1b-instruct]
