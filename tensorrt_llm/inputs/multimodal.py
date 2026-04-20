@@ -879,8 +879,7 @@ def require_mm_spans_if_needed(
             f"prompt_len={prompt_len}) but py_multimodal_data has keys "
             f"{mm_keys} with no spans. The input processor may be missing a "
             f"discriminator (override get_mm_token_ids or ensure get_vocab_size "
-            f"resolves). See docs/superpowers/specs/"
-            f"2026-04-20-mm-span-enforcement-redesign.md.")
+            f"resolves).")
 
     logger.warning_once(
         "mm_contiguous_spans missing on multimodal request (keys=%s); "
