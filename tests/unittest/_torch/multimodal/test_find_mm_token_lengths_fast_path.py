@@ -100,3 +100,30 @@ def test_image_only_request_unaffected():
 
     assert result == {"image": [128, 128]}
     processor.get_num_tokens_per_video.assert_not_called()
+
+
+def test_mixed_image_and_video_isolates_vgt_to_video_branch():
+    # Regression guard: `video_grid_thw` must not leak into the image branch.
+    # 2 images + 2 videos — one call per item on each branch.
+    processor = _make_mock_processor(image_count=128)
+    mm_data = {
+        "image": [_fake_pil_image(), _fake_pil_image()],
+        "video": [_fake_video(), _fake_video()],
+    }
+    vgt = torch.tensor([[2, 14, 14], [1, 7, 7]])
+    multimodal_data = {"video": {"video_grid_thw": vgt}}
+
+    result = find_mm_token_lengths(mm_data,
+                                   processor,
+                                   multimodal_data=multimodal_data)
+
+    assert result == {
+        "image": [128, 128],
+        "video": torch.prod(vgt, dim=1).tolist(),
+    }
+    assert processor.get_num_tokens_per_image.call_count == 2
+    for call in processor.get_num_tokens_per_image.call_args_list:
+        assert "video_grid_thw" not in call.kwargs
+    assert processor.get_num_tokens_per_video.call_count == 2
+    for i, call in enumerate(processor.get_num_tokens_per_video.call_args_list):
+        assert torch.equal(call.kwargs["video_grid_thw"], vgt[i])

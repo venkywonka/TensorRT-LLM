@@ -198,9 +198,6 @@ class MultimodalRuntimeData:
                         self.num_mm_tokens_in_chunk += length
 
         if len(self.special_token_offsets) > 0:
-            # O(N) linear scans — correct regardless of offset ordering, which
-            # makes MultimodalRuntimeData safe to construct directly without a
-            # sortedness invariant on the caller.
             mm_tokens_end_pos = (self.num_cached_mm_tokens +
                                  self.num_mm_tokens_in_chunk)
             self.num_cached_special_tokens = sum(
