@@ -588,7 +588,7 @@ def apply_mm_hashes(
     mm_uuids: Optional[Dict[str, List[Optional[str]]]] = None,
     hash_lib=default_hasher
 ) -> Tuple[Dict[str, List[str]], Optional[List[Optional[str]]]]:
-    """Apply hashing to multimodal data, one hash per logical unit (image/video).
+    """Apply hashing to multimodal data, one hash per logical multimodal unit.
 
     When a UUID is provided for a unit, the hash is computed from both the UUID
     and the content together: BLAKE3(UUID || Content). This ensures:
@@ -743,7 +743,7 @@ def find_mm_token_lengths(
 ) -> Dict[str, List[int]]:
     """Get the token lengths of each multimodal item.
 
-    Returns the total token count for each item (image or video), including any special tokens
+    Returns the total token count for each multimodal item, including any special tokens
     (e.g., image_begin, image_end, image_break) that may be mixed with the actual
     multimodal content tokens. This mm_token_lengths represents the full chunk from beginning
     to end, not just pure image/video/audio tokens.
@@ -797,6 +797,10 @@ def find_mm_token_lengths(
                     item = [ToPILImage()(frame) for frame in item]
                 call_kwargs = {"video": item}
                 if fast_path_vgt is not None:
+                    # Note: forwarding video_grid_thw does not guarantee the
+                    # processor uses it; get_num_tokens_per_video is
+                    # processor-dependent. Qwen3-VL consumes it (fast path);
+                    # other processors may ignore it via **kwargs.
                     call_kwargs["video_grid_thw"] = fast_path_vgt[idx]
                 num_tokens = input_processor.get_num_tokens_per_video(
                     **call_kwargs)

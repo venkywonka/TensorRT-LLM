@@ -324,16 +324,15 @@ class BaseMultimodalInputProcessor(ABC):
         self,
         *,
         video: List[Image.Image],
-        video_grid_thw: Optional["torch.Tensor"] = None,
         **kwargs,
     ):
         """
         Calculate the number of tokens generated for a video.
 
-        This (default) method delegates to the Hugging Face processor's '_get_num_multimodal_tokens' method and ignores ``video_grid_thw``.
+        This (default) method delegates to the Hugging Face processor's '_get_num_multimodal_tokens' method.
         Returns the token count for the given video.
 
-        Subclasses can override to consume ``video_grid_thw`` (typically threaded through from ``multimodal_data["video"]["video_grid_thw"]``) and skip the HF recompute.
+        Subclasses can override this method to provide custom logic to calculate the number of tokens.
         """
         video_width = video[0].width
         video_height = video[0].height
