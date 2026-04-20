@@ -19,7 +19,8 @@ from tensorrt_llm._utils import (is_trace_enabled, maybe_pin_memory, nvtx_range,
                                  trace_func)
 from tensorrt_llm.bindings.internal.runtime import TaskLayerModuleConfig
 from tensorrt_llm.inputs.multimodal import (MultimodalParams,
-                                            MultimodalRuntimeData)
+                                            MultimodalRuntimeData,
+                                            require_mm_spans_if_needed)
 from tensorrt_llm.inputs.registry import (create_input_processor,
                                           create_input_processor_with_hash)
 from tensorrt_llm.llmapi.llm_args import (CudaGraphConfig, TorchCompileConfig,
@@ -72,25 +73,6 @@ from .resource_manager import (BaseResourceManager, KVCacheManager,
                                ResourceManager, ResourceManagerType)
 from .sampler import SampleStateTensors
 from .scheduler import ScheduledRequests
-
-_MM_METADATA_ONLY_KEYS = frozenset({
-    "mrope_config",
-    "mm_contiguous_spans",
-    "special_token_offsets",
-    "layout_metadata",
-})
-
-
-def _check_mm_spans_present(py_multimodal_data: Optional[dict]) -> None:
-    """Raise if multimodal data is present but mm_contiguous_spans is missing."""
-    if not py_multimodal_data:
-        return
-    if py_multimodal_data.get("mm_contiguous_spans") is not None:
-        return
-    mm_keys = set(py_multimodal_data.keys()) - _MM_METADATA_ONLY_KEYS
-    if mm_keys:
-        raise ValueError(f"Request has multimodal data keys {mm_keys} but no "
-                         "mm_contiguous_spans in py_multimodal_data.")
 
 
 class ModelEngine(ABC):
@@ -2322,8 +2304,15 @@ class PyTorchModelEngine(ModelEngine):
             num_cached_tokens_per_seq.append(past_seen_token_num)
             request.cached_tokens = num_cached_tokens_per_seq[-1]
 
-            # Multimodal — fail-fast if multimodal payload present but spans missing
-            _check_mm_spans_present(request.py_multimodal_data)
+            # Multimodal — require spans only when this iteration is partial
+            # (chunked prefill or KV-cache reuse). Non-partial iterations degrade
+            # gracefully when spans are absent; see inputs/multimodal.py.
+            require_mm_spans_if_needed(
+                request.py_multimodal_data,
+                begin_compute=past_seen_token_num,
+                end_compute=end_compute,
+                prompt_len=len(all_prompt_tokens),
+            )
             mm_spans = request.py_multimodal_data.get(
                 'mm_contiguous_spans') if request.py_multimodal_data else None
             # Gate on spans, not multimodal_hashes: Path B in registry.py

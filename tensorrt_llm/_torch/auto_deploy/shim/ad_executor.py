@@ -37,7 +37,7 @@ from tensorrt_llm._torch.pyexecutor.seq_slot_manager import SeqSlotManager
 from tensorrt_llm._torch.speculative import get_spec_drafter
 from tensorrt_llm._torch.speculative.eagle3 import Eagle3OneModelSampler, Eagle3ResourceManager
 from tensorrt_llm._utils import nvtx_range
-from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData
+from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData, require_mm_spans_if_needed
 from tensorrt_llm.llmapi.llm_args import (
     ContextChunkingPolicy,
     EagleDecodingConfig,
@@ -660,11 +660,19 @@ class ADEngine(ModelEngine):
                 if req.py_multimodal_data
                 else None
             )
+            all_prompt_tokens = req.get_tokens(0)
+            require_mm_spans_if_needed(
+                req.py_multimodal_data,
+                begin_compute=begin_compute,
+                end_compute=end_compute,
+                prompt_len=len(all_prompt_tokens),
+            )
             if mm_spans is None:
-                raise ValueError(
-                    f"Request {i} has multimodal tokens but no "
-                    "mm_contiguous_spans in py_multimodal_data."
-                )
+                # Non-partial request without spans — skip MultimodalRuntimeData
+                # construction; flat_start / count will be 0 for this request.
+                flat_start_list.append(0)
+                count_list.append(0)
+                continue
 
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,

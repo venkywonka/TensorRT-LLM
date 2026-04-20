@@ -813,6 +813,81 @@ def find_mm_token_lengths(
     return num_mm_tokens  # flatten all mm instances to a single list
 
 
+# Keys in py_multimodal_data that carry metadata (not vision/audio content).
+# If py_multimodal_data has ONLY these keys, the request has no real MM
+# payload (e.g. mrope-only warmup on an mrope-enabled model) and the
+# require_mm_spans_if_needed gate short-circuits.
+_MM_METADATA_ONLY_KEYS = frozenset({
+    "mrope_config",
+    "mm_contiguous_spans",
+    "special_token_offsets",
+    "layout_metadata",
+})
+
+
+def _has_mm_payload_keys(py_multimodal_data: Optional[dict]) -> bool:
+    """True iff py_multimodal_data contains vision/video/audio content keys.
+
+    Metadata-only payloads (``mrope_config`` on mrope warmup,
+    ``mm_contiguous_spans`` alone, ``special_token_offsets`` alone,
+    ``layout_metadata``) return False — those don't carry real MM content
+    that the model needs to fuse embeddings for.
+    """
+    if not py_multimodal_data:
+        return False
+    return bool(set(py_multimodal_data.keys()) - _MM_METADATA_ONLY_KEYS)
+
+
+def require_mm_spans_if_needed(
+    py_multimodal_data: Optional[dict],
+    *,
+    begin_compute: int,
+    end_compute: int,
+    prompt_len: int,
+) -> None:
+    """Raise iff this iteration is partial AND MM data is present without spans.
+
+    A partial iteration is one where either:
+      * ``begin_compute > 0`` — a prefix was reused from KV cache, OR
+      * ``end_compute < prompt_len`` — the scheduler chose to chunk.
+
+    Partial iterations require ``mm_contiguous_spans`` to compute
+    ``num_cached_mm_tokens`` and ``num_mm_tokens_in_chunk`` correctly in
+    ``MultimodalRuntimeData``. Full-prefill, no-reuse iterations do not:
+    ``MultimodalRuntimeData`` stays ``None`` and ``find_input_mm_embeds``
+    handles the full payload via mask-based position lookup.
+
+    When spans are missing on a non-partial iteration, log a one-shot warning
+    via ``logger.warning_once`` and proceed.
+    """
+    if not _has_mm_payload_keys(py_multimodal_data):
+        return
+    if py_multimodal_data.get("mm_contiguous_spans") is not None:
+        return
+
+    is_partial = (begin_compute > 0) or (end_compute < prompt_len)
+    mm_keys = set(py_multimodal_data.keys()) - _MM_METADATA_ONLY_KEYS
+
+    if is_partial:
+        raise ValueError(
+            f"Request requires mm_contiguous_spans for partial iteration "
+            f"(begin_compute={begin_compute}, end_compute={end_compute}, "
+            f"prompt_len={prompt_len}) but py_multimodal_data has keys "
+            f"{mm_keys} with no spans. The input processor may be missing a "
+            f"discriminator (override get_mm_token_ids or ensure get_vocab_size "
+            f"resolves). See docs/superpowers/specs/"
+            f"2026-04-20-mm-span-enforcement-redesign.md.")
+
+    logger.warning_once(
+        "mm_contiguous_spans missing on multimodal request (keys=%s); "
+        "running without span-aware accounting. This is fine for full-prefill "
+        "iterations but will fail if this request is later chunked or reuses "
+        "KV cache.",
+        mm_keys,
+        key="mm_spans_missing_non_partial",
+    )
+
+
 def find_contiguous_mm_spans(
     input_ids: Union[torch.Tensor, List[int], np.ndarray],
     vocab_size: Optional[int] = None,

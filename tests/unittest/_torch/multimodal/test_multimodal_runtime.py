@@ -7,7 +7,6 @@ import torch
 
 from tensorrt_llm._torch.models.modeling_multimodal_utils import (
     find_input_mm_embeds, get_multimodal_embeddings)
-from tensorrt_llm._torch.pyexecutor.model_engine import _check_mm_spans_present
 from tensorrt_llm.inputs.multimodal import (MultimodalParams,
                                             MultimodalRuntimeData,
                                             find_contiguous_mm_spans,
@@ -1091,52 +1090,6 @@ class TestMultimodalRuntimeDataPreset:
         # Special tokens at offsets [1, 5] are < 8 (cached), [9, 13] are in [8, 16)
         assert runtime.num_cached_special_tokens == 2
         assert runtime.num_special_tokens_in_chunk == 2
-
-
-class TestCheckMmSpansPresent:
-    """Test cases for _check_mm_spans_present — the fail-fast discriminator."""
-
-    @pytest.mark.parametrize("mm_data", [
-        None,
-        {
-            "mrope_config": {
-                "mrope_position_ids": torch.zeros(3, 1, 5)
-            }
-        },
-        {
-            "multimodal_embedding": torch.zeros(5, 10),
-            "mm_contiguous_spans": [(0, 5)]
-        },
-        {
-            "mrope_config": {},
-            "special_token_offsets": [1, 2],
-            "layout_metadata": {}
-        },
-        {},
-    ],
-                             ids=[
-                                 "none", "mrope_only", "spans_present",
-                                 "metadata_only", "empty_dict"
-                             ])
-    def test_no_raise(self, mm_data):
-        """Non-vision or spans-present data should not trigger fail-fast."""
-        _check_mm_spans_present(mm_data)
-
-    @pytest.mark.parametrize("mm_data", [
-        {
-            "multimodal_embedding": torch.zeros(5, 10)
-        },
-        {
-            "image": {
-                "pixel_values": torch.zeros(1, 1, 1)
-            }
-        },
-    ],
-                             ids=["embedding_no_spans", "pixels_no_spans"])
-    def test_vision_data_without_spans_raises(self, mm_data):
-        """Vision data present but mm_contiguous_spans missing — must raise."""
-        with pytest.raises(ValueError, match="mm_contiguous_spans"):
-            _check_mm_spans_present(mm_data)
 
 
 class _MockProcessor:
