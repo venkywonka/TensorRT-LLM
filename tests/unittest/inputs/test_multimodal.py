@@ -16,7 +16,7 @@ from tensorrt_llm.inputs.multimodal import _has_mm_payload_keys, require_mm_span
 from tensorrt_llm.logger import logger as _trtllm_logger
 
 # Key used by require_mm_spans_if_needed's one-shot warning. The TRT-LLM
-# logger's ``_appeared_keys`` set is a process-wide singleton, so tests that
+# logger's `_appeared_keys` set is a process-wide singleton, so tests that
 # assert on the warning must reset this key around each call to get
 # deterministic, order-independent results.
 _WARN_ONCE_KEY = "mm_spans_missing_non_partial"
@@ -31,10 +31,10 @@ def _reset_log_once_key():
 
 
 def _capture_trtllm_warnings(fn):
-    """Run ``fn`` and return log records emitted on the TRT-LLM logger.
+    """Run `fn` and return log records emitted on the TRT-LLM logger.
 
-    The TRT-LLM logger uses the ``TRT-LLM`` name and sets ``propagate=False``,
-    so pytest's ``caplog`` (which hooks the root logger) doesn't capture its
+    The TRT-LLM logger uses the `TRT-LLM` name and sets `propagate=False`,
+    so pytest's `caplog` (which hooks the root logger) doesn't capture its
     output. We attach a handler directly to the TRT-LLM logger instead.
     """
     trt_logger = logging.getLogger("TRT-LLM")

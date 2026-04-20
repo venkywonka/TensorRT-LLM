@@ -25,7 +25,7 @@ class MultimodalInput:
 
     Indexed per logical unit (one image, one video), NOT per contiguous token
     run. Non-contiguous tokens (e.g. video frames with text separators) are
-    tracked via ``mm_contiguous_spans`` in ``py_multimodal_data``.
+    tracked via `mm_contiguous_spans` in `py_multimodal_data`.
     """
 
     multimodal_hashes: List[List[int]]
@@ -832,9 +832,9 @@ _MM_METADATA_ONLY_KEYS = frozenset({
 def _has_mm_payload_keys(py_multimodal_data: Optional[dict]) -> bool:
     """True iff py_multimodal_data contains vision/video/audio content keys.
 
-    Metadata-only payloads (``mrope_config`` on mrope warmup,
-    ``mm_contiguous_spans`` alone, ``special_token_offsets`` alone,
-    ``layout_metadata``) return False — those don't carry real MM content
+    Metadata-only payloads (`mrope_config` on mrope warmup,
+    `mm_contiguous_spans` alone, `special_token_offsets` alone,
+    `layout_metadata`) return False — those don't carry real MM content
     that the model needs to fuse embeddings for.
     """
     if not py_multimodal_data:
@@ -852,17 +852,17 @@ def require_mm_spans_if_needed(
     """Raise iff this iteration is partial AND MM data is present without spans.
 
     A partial iteration is one where either:
-      * ``begin_compute > 0`` — a prefix was reused from KV cache, OR
-      * ``end_compute < prompt_len`` — the scheduler chose to chunk.
+      * `begin_compute > 0` — a prefix was reused from KV cache, OR
+      * `end_compute < prompt_len` — the scheduler chose to chunk.
 
-    Partial iterations require ``mm_contiguous_spans`` to compute
-    ``num_cached_mm_tokens`` and ``num_mm_tokens_in_chunk`` correctly in
-    ``MultimodalRuntimeData``. Full-prefill, no-reuse iterations do not:
-    ``MultimodalRuntimeData`` stays ``None`` and ``find_input_mm_embeds``
+    Partial iterations require `mm_contiguous_spans` to compute
+    `num_cached_mm_tokens` and `num_mm_tokens_in_chunk` correctly in
+    `MultimodalRuntimeData`. Full-prefill, no-reuse iterations do not:
+    `MultimodalRuntimeData` stays `None` and `find_input_mm_embeds`
     handles the full payload via mask-based position lookup.
 
     When spans are missing on a non-partial iteration, log a one-shot warning
-    via ``logger.warning_once`` and proceed.
+    via `logger.warning_once` and proceed.
     """
     if not _has_mm_payload_keys(py_multimodal_data):
         return
@@ -1020,7 +1020,7 @@ def find_mm_token_positions(
         - start_special_token_positions: List of positions of special tokens
             in the union of all chunks (indices into the flat mm token list).
         - contiguous_spans: List of (start, length) tuples for each contiguous run
-            of MM tokens in ``input_ids``. Used by MultimodalRuntimeData for exact
+            of MM tokens in `input_ids`. Used by MultimodalRuntimeData for exact
             counting during chunked prefill. A single logical unit may produce
             multiple contiguous spans when its tokens are non-contiguous.
     """
