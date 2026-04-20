@@ -237,39 +237,38 @@ class BaseMultimodalInputProcessor(ABC):
             "Please override this method to provide the vocabulary size. ")
         return None
 
-    _MM_TOKEN_ID_CONFIG_ATTRS: Tuple[str, ...] = (
-        "image_token_id",
-        "image_token_index",
-        "video_token_id",
-        "video_token_index",
-        "audio_token_id",
-        "audio_token_index",
-    )
-
     def get_mm_token_ids(self) -> Optional[Tensor]:
-        """Return multimodal token IDs if available; otherwise None.
+        """Return the set of token IDs that belong to a logical multimodal unit.
 
-        The token IDs filtered by this method should be contiguous for each logical multimodal unit, i.e. special tokens if any should be included.
+        The returned IDs are used as an inclusion mask by
+        ``find_contiguous_mm_spans`` (see ``tensorrt_llm/inputs/multimodal.py``),
+        which groups **runs of adjacent matching positions** in ``input_ids`` into
+        spans. To ensure one logical unit (e.g. one image, one video) shows up as
+        a **single** span, include every token the model uses to represent that
+        unit — placeholders AND any in-prompt framing tokens (e.g. ``image_break``,
+        ``image_end``) that sit between placeholders.
 
-        Resolution order:
-        1) self.processor.mm_token_ids (when exposed and non-None).
-        2) Single-token ids from self.config (image_token_id, video_token_id, ...).
+        Omitting framing IDs will fragment a single logical unit into multiple
+        spans, breaking downstream per-unit accounting (hashing, KV-cache reuse,
+        chunked prefill bookkeeping).
+
+        Example (Mistral-style single image)::
+
+            prompt = ... [IMG][IMG][IMG_BREAK][IMG][IMG][IMG_END] ...
+            get_mm_token_ids() returns {IMG}                       -> 3 spans (wrong)
+            get_mm_token_ids() returns {IMG, IMG_BREAK, IMG_END}   -> 1 span  (right)
+
+        This contract governs intra-unit layout only. Inter-unit layout (multiple
+        logical units at disjoint positions in the same prompt, or a logical unit
+        split across prefill chunk boundaries) is handled downstream by
+        ``MultimodalRuntimeData`` and the chunked-prefill paths, not here.
+
+        Resolution: ``self.processor.mm_token_ids`` when the HF processor
+        exposes that attribute; ``None`` otherwise. Subclass overrides
+        should return a 1-D tensor of int64 token ids.
         """
-        processor_ids = getattr(self.processor, "mm_token_ids", None)
-        if processor_ids is not None:
-            return processor_ids
-
-        config_ids: List[int] = []
-        for attr in self._MM_TOKEN_ID_CONFIG_ATTRS:
-            value = getattr(self.config, attr, None)
-            if isinstance(value, bool) or value is None:
-                continue
-            if isinstance(value, int):
-                config_ids.append(value)
-        seen = set()
-        unique_ids = [i for i in config_ids if not (i in seen or seen.add(i))]
-        if unique_ids:
-            return torch.tensor(unique_ids, dtype=torch.int64)
+        if hasattr(self.processor, "mm_token_ids"):
+            return self.processor.mm_token_ids
 
         logger.debug(
             f"Cannot find mm_token_ids in {self.__class__.__name__}.processor. "

@@ -11,8 +11,7 @@ from tensorrt_llm.inputs.multimodal import (MultimodalParams,
                                             MultimodalRuntimeData,
                                             find_contiguous_mm_spans,
                                             find_mm_token_positions)
-from tensorrt_llm.inputs.registry import (BaseMultimodalInputProcessor,
-                                          compute_mm_contiguous_spans_if_absent)
+from tensorrt_llm.inputs.registry import compute_mm_contiguous_spans_if_absent
 
 # Embedding dim kept small — functions under test only index along dim 0.
 _EMBED_DIM = 4
@@ -1167,100 +1166,6 @@ class TestEnsureMmContiguousSpans:
         compute_mm_contiguous_spans_if_absent([100, 101], extra, proc)
         # Should not have set spans since we can't identify MM tokens
         assert "mm_contiguous_spans" not in extra["multimodal_data"]
-
-
-class _ConcreteInputProcessor(BaseMultimodalInputProcessor):
-    """Minimal concrete BaseMultimodalInputProcessor for driving the metadata helpers."""
-
-    def __init__(self, *, config, tokenizer=None, processor=None):
-        self._config = config
-        self._tokenizer = tokenizer
-        self._processor = processor
-        self._use_fast = True
-        self._multimodal_hashing_supported = None
-
-    @property
-    def processor(self):
-        return self._processor
-
-    @property
-    def tokenizer(self):
-        return self._tokenizer
-
-    @property
-    def config(self):
-        return self._config
-
-    @property
-    def dtype(self):
-        return torch.float16
-
-    def __call__(self, inputs, sampling_params):  # pragma: no cover - unused
-        raise NotImplementedError
-
-
-class TestBaseMultimodalInputProcessorTokenLookup:
-    """Test cases for BaseMultimodalInputProcessor.get_mm_token_ids resolution."""
-
-    def _mock_config(self, **attrs):
-        config = Mock(spec=[])
-        for name, value in attrs.items():
-            setattr(config, name, value)
-        return config
-
-    def test_processor_mm_token_ids_wins(self):
-        processor = Mock(spec=["mm_token_ids"])
-        processor.mm_token_ids = torch.tensor([99])
-        config = self._mock_config(image_token_index=262144)
-        ip = _ConcreteInputProcessor(config=config, processor=processor)
-        got = ip.get_mm_token_ids()
-        assert torch.equal(got, torch.tensor([99]))
-
-    def test_processor_mm_token_ids_is_none_falls_through(self):
-        processor = Mock(spec=["mm_token_ids"])
-        processor.mm_token_ids = None
-        config = self._mock_config(image_token_index=262144)
-        ip = _ConcreteInputProcessor(config=config, processor=processor)
-        got = ip.get_mm_token_ids()
-        assert got is not None
-        assert got.tolist() == [262144]
-
-    def test_falls_back_to_config_image_token_index(self):
-        processor = Mock(spec=[])
-        config = self._mock_config(image_token_index=262144)
-        ip = _ConcreteInputProcessor(config=config, processor=processor)
-        got = ip.get_mm_token_ids()
-        assert got is not None
-        assert got.tolist() == [262144]
-
-    def test_falls_back_to_config_image_token_id(self):
-        processor = Mock(spec=[])
-        config = self._mock_config(image_token_id=151655, video_token_id=151656)
-        ip = _ConcreteInputProcessor(config=config, processor=processor)
-        got = ip.get_mm_token_ids()
-        assert got is not None
-        assert sorted(got.tolist()) == [151655, 151656]
-
-    def test_dedupes_duplicate_token_ids(self):
-        processor = Mock(spec=[])
-        config = self._mock_config(image_token_id=32000,
-                                   image_token_index=32000)
-        ip = _ConcreteInputProcessor(config=config, processor=processor)
-        got = ip.get_mm_token_ids()
-        assert got.tolist() == [32000]
-
-    def test_returns_none_when_no_hint_available(self):
-        processor = Mock(spec=[])
-        config = self._mock_config()
-        ip = _ConcreteInputProcessor(config=config, processor=processor)
-        assert ip.get_mm_token_ids() is None
-
-    def test_ignores_bool_attribute_values(self):
-        # isinstance(True, int) is True; guard rejects a feature-flag bool.
-        processor = Mock(spec=[])
-        config = self._mock_config(image_token_id=True, image_token_index=None)
-        ip = _ConcreteInputProcessor(config=config, processor=processor)
-        assert ip.get_mm_token_ids() is None
 
 
 class TestFindContiguousMmSpans:
