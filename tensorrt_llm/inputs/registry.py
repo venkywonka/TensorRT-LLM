@@ -241,12 +241,12 @@ class BaseMultimodalInputProcessor(ABC):
         """Return the set of token IDs that belong to a logical multimodal unit.
 
         The returned IDs are used as an inclusion mask by
-        `find_contiguous_mm_spans` (see `tensorrt_llm/inputs/multimodal.py`),
-        which groups **runs of adjacent matching positions** in `input_ids` into
+        ``find_contiguous_mm_spans`` (see ``tensorrt_llm/inputs/multimodal.py``),
+        which groups **runs of adjacent matching positions** in ``input_ids`` into
         spans. To ensure one logical unit (e.g. one image, one video) shows up as
         a **single** span, include every token the model uses to represent that
-        unit — placeholders AND any in-prompt framing tokens (e.g. `image_break`,
-        `image_end`) that sit between placeholders.
+        unit — placeholders AND any in-prompt framing tokens (e.g. ``image_break``,
+        ``image_end``) that sit between placeholders.
 
         Omitting framing IDs will fragment a single logical unit into multiple
         spans, breaking downstream per-unit accounting (hashing, KV-cache reuse,
@@ -261,10 +261,10 @@ class BaseMultimodalInputProcessor(ABC):
         This contract governs intra-unit layout only. Inter-unit layout (multiple
         logical units at disjoint positions in the same prompt, or a logical unit
         split across prefill chunk boundaries) is handled downstream by
-        `MultimodalRuntimeData` and the chunked-prefill paths, not here.
+        ``MultimodalRuntimeData`` and the chunked-prefill paths, not here.
 
-        Resolution: `self.processor.mm_token_ids` when the HF processor
-        exposes that attribute; `None` otherwise. Subclass overrides
+        Resolution: ``self.processor.mm_token_ids`` when the HF processor
+        exposes that attribute; ``None`` otherwise. Subclass overrides
         should return a 1-D tensor of int64 token ids.
         """
         if hasattr(self.processor, "mm_token_ids"):
@@ -773,9 +773,9 @@ def compute_mm_contiguous_spans_if_absent(
     """Ensure mm_contiguous_spans is present in extra_processed_inputs.
 
     Idempotent: if the field already exists, this is a no-op.  Otherwise,
-    scans `prompt_token_ids` for contiguous runs of multimodal tokens
-    using vocabulary / token-ID metadata from `input_processor` and stores
-    the result in `extra_processed_inputs["multimodal_data"]`.
+    scans ``prompt_token_ids`` for contiguous runs of multimodal tokens
+    using vocabulary / token-ID metadata from ``input_processor`` and stores
+    the result in ``extra_processed_inputs["multimodal_data"]``.
 
     Safe to call after any input-processing path — if the processor cannot
     provide vocabulary or MM token information, the call is silently skipped.
