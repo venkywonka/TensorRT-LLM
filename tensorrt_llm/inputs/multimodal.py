@@ -24,21 +24,21 @@ default_hasher = blake3
 class MultimodalInput:
     """Per-logical-unit multimodal metadata for KV-cache hashing (C++ layer).
 
-    Indexed per logical unit (one image, one video), NOT per contiguous token
-    run. Non-contiguous tokens (e.g. video frames with text separators) are
-    tracked via ``mm_contiguous_spans`` in ``py_multimodal_data``.
+    Indexed per logical unit (one image, one video). Which positions inside
+    each unit's outer bounding box actually consume encoder rows (vs. inline
+    specials or interleaved text) is described by ``multimodal_embed_mask``.
     """
 
     multimodal_hashes: List[List[int]]
     """Hash digest per logical unit (list of 8 int32 each)."""
 
     multimodal_positions: List[int]
-    """Starting token position of each logical unit. For non-contiguous units
-    this is the position of the *first* token."""
+    """Starting token position of each logical unit's outer bounding box."""
 
     multimodal_lengths: List[int]
-    """Total token count per logical unit, including special tokens.
-    For non-contiguous units this is the sum across all contiguous runs."""
+    """Length of each unit's outer bounding box (embed slots + any inline
+    specials or non-mm tokens that live inside it). The per-position embed/
+    non-embed decision is in ``multimodal_embed_mask``."""
 
     multimodal_uuids: Optional[List[Optional[str]]] = None
     """Optional user-provided UUIDs for logical multimodal units.
@@ -59,8 +59,7 @@ class MultimodalInput:
     multimodal_embed_mask: Optional[List[Optional[torch.Tensor]]] = None
     """Per-logical-unit bool mask over outer-box positions. None iff not yet
     materialized; each entry None iff unit has no inline specials. Python-only —
-    NOT forwarded to the C++ tle::MultimodalInput.  See
-    slop/mm_is_embed_migration/goals.md §3.1.
+    NOT forwarded to the C++ tle::MultimodalInput.
     """
 
     def __post_init__(self):
@@ -138,7 +137,7 @@ class MultimodalInput:
     ) -> torch.Tensor:
         """Idempotent materialization of embed_mask_flat.
 
-        Source order (see slop/mm_is_embed_migration/goals.md §4.2-§4.3):
+        Source order (highest priority first):
           1. self.multimodal_embed_mask if populated -> stitch into flat.
           2. mm_token_ids if available -> isin(prompt, mm_token_ids), then
              subtract specials when declared.
@@ -233,20 +232,22 @@ class MultimodalInput:
 class MultimodalRuntimeData:
     """Runtime data for tracking multimodal token caching and reuse per request sequence.
 
-    Two construction modes:
+    Two construction modes (pick one — both cover chunked prefill + KV reuse):
 
-    - LEGACY (sparse): pass ``mm_contiguous_spans`` + ``special_token_offsets``;
-      counts derived via interval arithmetic. Path will be dropped in Commit 6.
-    - CUMSUM (mask-based): pass ``embed_mask_cumsum`` (from
+    - CUMSUM (mask-based, preferred): pass ``embed_mask_cumsum`` (from
       ``MultimodalInput.embed_mask_cumsum``); counts derived via three O(1)
-      cumsum lookups. Preferred for non-contiguous MM with specials.
+      cumsum lookups. Supports embed positions that are non-contiguous within
+      a single logical unit (inline specials, interleaved text) natively.
+    - LEGACY (span-based): pass ``mm_contiguous_spans`` + ``special_token_offsets``;
+      counts derived via interval arithmetic. Kept for not-yet-migrated
+      consumers; slated for removal once all call sites use the cumsum path.
 
     Attributes:
         past_seen_token_num: Total tokens already processed in previous iterations (cached)
         chunk_end_pos: End position of the current chunk for chunked prefill
+        embed_mask_cumsum: CUMSUM — int64 prefix sum of embed_mask_flat from MultimodalInput
         mm_contiguous_spans: LEGACY — list of (start_position, token_count) per run
         special_token_offsets: LEGACY — indices of specials in the flat MM token union
-        embed_mask_cumsum: CUMSUM — int64 prefix sum of embed_mask_flat from MultimodalInput
 
         num_cached_mm_tokens: Number of MM tokens that are cached (computed)
         num_mm_tokens_in_chunk: Number of MM tokens in the current chunk (computed)
@@ -254,7 +255,7 @@ class MultimodalRuntimeData:
         total_embeds_in_request: Total embed slots (cumsum path; excludes specials)
 
         num_cached_special_tokens, num_special_tokens_in_chunk, total_special_tokens_in_request:
-            LEGACY — dropped in Commit 6
+            LEGACY — populated only on the legacy span-based path.
     """
     past_seen_token_num: int
     chunk_end_pos: int
@@ -1137,7 +1138,7 @@ def compute_per_unit_embed_masks(
 
     Companion to ``find_contiguous_mm_spans`` — keeps the producer API back-compat
     (still 2-tuple) while providing the per-unit mask needed for
-    MultimodalInput.multimodal_embed_mask. See slop/mm_is_embed_migration/goals.md §3.1.
+    MultimodalInput.multimodal_embed_mask.
     """
     if not isinstance(input_ids, torch.Tensor):
         if isinstance(input_ids, list):

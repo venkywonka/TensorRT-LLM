@@ -807,7 +807,7 @@ def compute_mm_contiguous_spans_if_absent(
     if special_token_offsets and "special_token_offsets" not in mm_data:
         mm_data["special_token_offsets"] = special_token_offsets
     # Dual-write per-unit embed masks so the mask-path consumers can rely
-    # on their presence. See slop/mm_is_embed_migration/plan.md.
+    # on their presence.
     if "multimodal_embed_mask" not in mm_data:
         from tensorrt_llm.inputs.multimodal import compute_per_unit_embed_masks
         mm_data["multimodal_embed_mask"] = compute_per_unit_embed_masks(

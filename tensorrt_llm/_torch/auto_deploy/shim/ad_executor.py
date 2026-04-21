@@ -619,8 +619,7 @@ class ADEngine(ModelEngine):
         cumsum_total_mm = 0
         # Embed-mask path: concatenate per-request chunk-sliced flat masks.
         # Populated only for requests whose py_multimodal_data carries
-        # multimodal_embed_mask (per-unit bool masks). See
-        # slop/mm_is_embed_migration/goals.md §5.4.
+        # multimodal_embed_mask (per-unit bool masks).
         mm_chunk_embed_mask_flat: List[bool] = []
         mm_chunk_embed_mask_cu_seqlen: List[int] = [0]
 

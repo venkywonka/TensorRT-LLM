@@ -402,7 +402,6 @@ def test_ad_engine_stages_mm_chunk_embed_mask_from_mask_field():
     embed mask as an extra_args tensor so the exported VLM wrapper can consume
     it without reconstructing from spans+offsets.
 
-    See slop/mm_is_embed_migration/goals.md §5.4 and plan.md Commit 5.
     """
     device = torch.device("cuda")
     max_seq_len = 64

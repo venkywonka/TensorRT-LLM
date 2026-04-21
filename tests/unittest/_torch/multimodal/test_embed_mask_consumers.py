@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-"""Consumer-side unit tests for the multimodal embed-mask path.
-
-See slop/mm_is_embed_migration/goals.md §7.2 and plan.md Commits 3-4.
-"""
+"""Consumer-side unit tests for the multimodal embed-mask path."""
 
 import torch
 

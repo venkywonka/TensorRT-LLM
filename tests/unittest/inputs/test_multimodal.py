@@ -2,8 +2,7 @@
 # Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 """Tests for MultimodalInput.materialize_embed_mask and derived views.
 
-Each test gates a specific production branch — see
-slop/mm_is_embed_migration/goals.md §7.1 and plan.md Commit 1.
+Each test gates a specific production branch of the embed-mask path.
 """
 
 import pytest
