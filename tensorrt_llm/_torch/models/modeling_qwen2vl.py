@@ -967,7 +967,7 @@ class Qwen2VLModelBase(PreTrainedModel):
         """
         num_context_requests = attn_metadata.num_contexts
 
-        multimodal_params = kwargs.get("multimodal_params", [])
+        multimodal_params = kwargs.pop("multimodal_params", [])
         mm_embeds = []
         mrope_config = {}
         # NOTE: Qwen*-VL series has mrope_config even on the text-only prompts, so we need to separate
@@ -990,9 +990,13 @@ class Qwen2VLModelBase(PreTrainedModel):
             mrope_config = self.prepare_mrope_config(multimodal_params,
                                                      num_context_requests)
 
-        input_ids, input_embeds = fuse_input_embeds(self.llm.model.embed_tokens,
-                                                    input_ids, mm_embeds,
-                                                    **kwargs)
+        input_ids, input_embeds = fuse_input_embeds(
+            self.llm.model.embed_tokens,
+            input_ids,
+            mm_embeds,
+            multimodal_params=mm_multimodal_params
+            if len(mm_multimodal_params) > 0 else None,
+            **kwargs)
         output_prob = self.llm.forward(
             attn_metadata=attn_metadata,
             input_ids=input_ids,

@@ -148,7 +148,7 @@ class MultimodalInput:
         predicate byte-for-byte — the zero-regression guarantee.
         """
         # Second call is a no-op (backstop may fire after intake already ran).
-        if "_is_embed_flat" in self.__dict__:
+        if self.__dict__.get("_is_embed_flat") is not None:
             return self.__dict__["_is_embed_flat"]
 
         if not isinstance(prompt_token_ids, torch.Tensor):
@@ -168,8 +168,7 @@ class MultimodalInput:
                     per_unit = per_unit.to(device=prompt_token_ids.device,
                                            dtype=torch.bool)
                     mask[pos:pos + length] = per_unit
-            self.__dict__["_is_embed_flat"] = mask
-            return mask
+            return self._store_is_embed(mask)
 
         # Path 2/3: predicate over prompt_token_ids.
         if mm_token_ids is not None:
@@ -184,7 +183,16 @@ class MultimodalInput:
                 device=prompt_token_ids.device, dtype=prompt_token_ids.dtype)
             mask = mask & ~torch.isin(prompt_token_ids, mm_special_token_ids)
 
+        return self._store_is_embed(mask)
+
+    def _store_is_embed(self, mask: torch.Tensor) -> torch.Tensor:
+        # Write mask into the backing slot AND invalidate any stale
+        # @cached_property values (which may have been populated with None by a
+        # pre-materialization access). Without this, is_embed_flat and
+        # is_embed_cumsum return stale None after materialize_is_embed runs.
         self.__dict__["_is_embed_flat"] = mask
+        self.__dict__.pop("is_embed_flat", None)
+        self.__dict__.pop("is_embed_cumsum", None)
         return mask
 
     @cached_property

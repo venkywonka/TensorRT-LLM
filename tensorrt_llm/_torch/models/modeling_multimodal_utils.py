@@ -344,6 +344,7 @@ def fuse_input_embeds(
     text_token_indices: Optional[torch.IntTensor] = None,
     mm_token_indices: Optional[torch.IntTensor] = None,
     extra_embeds: Optional[List[torch.Tensor]] = None,
+    multimodal_params: Optional[List[MultimodalParams]] = None,
     **kwargs,
     # TODO: make unified return type for all models
 ) -> Union[Tuple[Optional[torch.IntTensor], Optional[torch.FloatTensor]],
@@ -358,11 +359,12 @@ def fuse_input_embeds(
         mm_embeds: List[(mm_total_length1, hidden_dim), ..., (mm_total_lengthi, hidden_dim)].
         mm_token_ids: possible token ids for multimodal tokens, if known. If not known and set to None, it is assumed that the multimodal tokens are out-of-vocabulary tokens.
         extra_embeds: Optional list of extra embed tensors for models that support it (e.g., Qwen3-VL/Qwen3-MoE-VL).
+        multimodal_params: Optional per-request MultimodalParams. When provided, the fuser takes the mask path: it reads (and if necessary materializes) MultimodalInput.is_embed_flat per request and derives text/mm indices from the per-chunk slice, bypassing the vocab-predicate filter. This path excludes inline specials by construction.
     Returns:
         - If (1) JIT test run, (2) non-multimodal run, i.e. all text-only requests, either context or generation phase (3) multimodal run, all requests in generation phase --> there is no multimodal data, return only the input_ids
         - If (4) multimodal run, mixed batch of context and generation requests, each context request has a multimodal feature --> return only the fused input_embeds of shape [total length, hidden_dim]. For text tokens, LLM embedding layer has already run.
     Note:
-        - Precedence: If kwargs provide indices (text_token_indices and mm_token_indices), those are used. If any one of them is not provided, fallback to filtering method. Sentinel-/OOV-based filtering (e.g., tokens >= vocab_size) is used only when neither index tensor and mm_token_ids is provided.
+        - Precedence: mask path (via multimodal_params) > caller-supplied indices > vocab-predicate filter.
         - This function may involve host-device synchronization if indices are not provided and filtering is performed. See filter_mm_token_from_input_ids for details.
     """
     if len(mm_embeds) == 0:
@@ -372,8 +374,32 @@ def fuse_input_embeds(
 
     mm_embed = torch.cat(mm_embeds, dim=0)
 
-    # TODO: support the case where only one index tensor is provided, the other is derived as the complement (try to avoid implicit host-device synchronization)
-    if text_token_indices is None or mm_token_indices is None:
+    if multimodal_params is not None and all(p.multimodal_input is not None
+                                             for p in multimodal_params):
+        slices = []
+        cursor = 0
+        for p in multimodal_params:
+            mi = p.multimodal_input
+            rt = p.multimodal_runtime
+            past = rt.past_seen_token_num if rt is not None else 0
+            end = rt.chunk_end_pos if rt is not None else None
+            if mi.is_embed_flat is None:
+                chunk_len = (end -
+                             past) if end is not None else input_ids.shape[0]
+                req_prompt = input_ids[cursor:cursor + chunk_len]
+                mi.materialize_is_embed(
+                    prompt_token_ids=req_prompt,
+                    vocab_size=embedding_layer.num_embeddings,
+                    mm_token_ids=mm_token_ids,
+                )
+            if end is None:
+                end = mi.is_embed_flat.shape[0]
+            slices.append(mi.is_embed_flat[past:end].to(input_ids.device))
+            cursor += (end - past)
+        mm_mask = torch.cat(slices) if len(slices) > 1 else slices[0]
+        mm_token_indices = torch.where(mm_mask)[0]
+        text_token_indices = torch.where(~mm_mask)[0]
+    elif text_token_indices is None or mm_token_indices is None:
         # NOTE: This function involves host-device synchronization due to torch.where() used in filter_mm_token_from_input_ids.
         text_token_indices, mm_token_indices = filter_mm_token_from_input_ids(
             input_ids,
