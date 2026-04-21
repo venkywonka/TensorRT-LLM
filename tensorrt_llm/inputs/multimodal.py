@@ -56,7 +56,7 @@ class MultimodalInput:
     returned in KV cache events.
     """
 
-    multimodal_is_embeds: Optional[List[Optional[torch.Tensor]]] = None
+    multimodal_embed_mask: Optional[List[Optional[torch.Tensor]]] = None
     """Per-logical-unit bool mask over outer-box positions. None iff not yet
     materialized; each entry None iff unit has no inline specials. Python-only —
     NOT forwarded to the C++ tle::MultimodalInput.  See
@@ -129,17 +129,17 @@ class MultimodalInput:
             torch.tensor(self.multimodal_positions, dtype=torch.int32),
             torch.tensor(self.multimodal_lengths, dtype=torch.int32))
 
-    def materialize_is_embed(
+    def materialize_embed_mask(
         self,
         prompt_token_ids: torch.Tensor,
         vocab_size: int,
         mm_token_ids: Optional[torch.Tensor] = None,
         mm_special_token_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Idempotent materialization of is_embed_flat.
+        """Idempotent materialization of embed_mask_flat.
 
         Source order (see slop/mm_is_embed_migration/goals.md §4.2-§4.3):
-          1. self.multimodal_is_embeds if populated -> stitch into flat.
+          1. self.multimodal_embed_mask if populated -> stitch into flat.
           2. mm_token_ids if available -> isin(prompt, mm_token_ids), then
              subtract specials when declared.
           3. vocab_size fallback -> prompt >= vocab_size, then subtract specials.
@@ -148,18 +148,18 @@ class MultimodalInput:
         predicate byte-for-byte — the zero-regression guarantee.
         """
         # Second call is a no-op (backstop may fire after intake already ran).
-        if self.__dict__.get("_is_embed_flat") is not None:
-            return self.__dict__["_is_embed_flat"]
+        if self.__dict__.get("_embed_mask_flat") is not None:
+            return self.__dict__["_embed_mask_flat"]
 
         if not isinstance(prompt_token_ids, torch.Tensor):
             prompt_token_ids = torch.as_tensor(prompt_token_ids)
 
         # Path 1: stitch from per-unit masks if the processor populated them.
-        if self.multimodal_is_embeds is not None:
+        if self.multimodal_embed_mask is not None:
             mask = torch.zeros(prompt_token_ids.shape[0],
                                dtype=torch.bool,
                                device=prompt_token_ids.device)
-            for i, per_unit in enumerate(self.multimodal_is_embeds):
+            for i, per_unit in enumerate(self.multimodal_embed_mask):
                 pos = self.multimodal_positions[i]
                 length = self.multimodal_lengths[i]
                 if per_unit is None:
@@ -168,7 +168,7 @@ class MultimodalInput:
                     per_unit = per_unit.to(device=prompt_token_ids.device,
                                            dtype=torch.bool)
                     mask[pos:pos + length] = per_unit
-            return self._store_is_embed(mask)
+            return self._store_embed_mask_flat(mask)
 
         # Path 2/3: predicate over prompt_token_ids.
         if mm_token_ids is not None:
@@ -183,38 +183,38 @@ class MultimodalInput:
                 device=prompt_token_ids.device, dtype=prompt_token_ids.dtype)
             mask = mask & ~torch.isin(prompt_token_ids, mm_special_token_ids)
 
-        return self._store_is_embed(mask)
+        return self._store_embed_mask_flat(mask)
 
-    def _store_is_embed(self, mask: torch.Tensor) -> torch.Tensor:
+    def _store_embed_mask_flat(self, mask: torch.Tensor) -> torch.Tensor:
         # Write mask into the backing slot AND invalidate any stale
         # @cached_property values (which may have been populated with None by a
-        # pre-materialization access). Without this, is_embed_flat and
-        # is_embed_cumsum return stale None after materialize_is_embed runs.
-        self.__dict__["_is_embed_flat"] = mask
-        self.__dict__.pop("is_embed_flat", None)
-        self.__dict__.pop("is_embed_cumsum", None)
+        # pre-materialization access). Without this, embed_mask_flat and
+        # embed_mask_cumsum return stale None after materialize_embed_mask runs.
+        self.__dict__["_embed_mask_flat"] = mask
+        self.__dict__.pop("embed_mask_flat", None)
+        self.__dict__.pop("embed_mask_cumsum", None)
         return mask
 
     @cached_property
-    def is_embed_flat(self) -> Optional[torch.Tensor]:
+    def embed_mask_flat(self) -> Optional[torch.Tensor]:
         """Return the cached bool[request_seq_len] mask, or None if not materialized.
 
-        Note: materialize_is_embed writes into self.__dict__["_is_embed_flat"]
+        Note: materialize_embed_mask writes into self.__dict__["_embed_mask_flat"]
         directly, so this property reads the cache when available; when it
         hasn't been called, returns None without attempting lazy stitching
-        (caller must pass prompt_token_ids + vocab via materialize_is_embed).
+        (caller must pass prompt_token_ids + vocab via materialize_embed_mask).
         """
-        return self.__dict__.get("_is_embed_flat")
+        return self.__dict__.get("_embed_mask_flat")
 
     @cached_property
-    def is_embed_cumsum(self) -> Optional[torch.Tensor]:
-        """Return int64 prefix sum of is_embed_flat, or None when mask is absent.
+    def embed_mask_cumsum(self) -> Optional[torch.Tensor]:
+        """Return int64 prefix sum of embed_mask_flat, or None when mask is absent.
 
         Enables O(1) range queries via get_chunk_embed_indices.
         """
-        if self.is_embed_flat is None:
+        if self.embed_mask_flat is None:
             return None
-        return self.is_embed_flat.to(dtype=torch.int64).cumsum(0)
+        return self.embed_mask_flat.to(dtype=torch.int64).cumsum(0)
 
     def get_chunk_embed_indices(self, chunk_start: int,
                                 chunk_end: int) -> Tuple[int, int]:
@@ -223,7 +223,7 @@ class MultimodalInput:
         Input positions are in the full prompt; output positions are row
         indices into the encoder output tensor. See goals.md §5.2.
         """
-        cs = self.is_embed_cumsum
+        cs = self.embed_mask_cumsum
         enc_lo = int(cs[chunk_start - 1]) if chunk_start > 0 else 0
         enc_hi = int(cs[chunk_end - 1]) if chunk_end > 0 else 0
         return enc_lo, enc_hi
@@ -237,8 +237,8 @@ class MultimodalRuntimeData:
 
     - LEGACY (sparse): pass ``mm_contiguous_spans`` + ``special_token_offsets``;
       counts derived via interval arithmetic. Path will be dropped in Commit 6.
-    - CUMSUM (mask-based): pass ``is_embed_cumsum`` (from
-      ``MultimodalInput.is_embed_cumsum``); counts derived via three O(1)
+    - CUMSUM (mask-based): pass ``embed_mask_cumsum`` (from
+      ``MultimodalInput.embed_mask_cumsum``); counts derived via three O(1)
       cumsum lookups. Preferred for non-contiguous MM with specials.
 
     Attributes:
@@ -246,7 +246,7 @@ class MultimodalRuntimeData:
         chunk_end_pos: End position of the current chunk for chunked prefill
         mm_contiguous_spans: LEGACY — list of (start_position, token_count) per run
         special_token_offsets: LEGACY — indices of specials in the flat MM token union
-        is_embed_cumsum: CUMSUM — int64 prefix sum of is_embed_flat from MultimodalInput
+        embed_mask_cumsum: CUMSUM — int64 prefix sum of embed_mask_flat from MultimodalInput
 
         num_cached_mm_tokens: Number of MM tokens that are cached (computed)
         num_mm_tokens_in_chunk: Number of MM tokens in the current chunk (computed)
@@ -261,7 +261,7 @@ class MultimodalRuntimeData:
 
     mm_contiguous_spans: Optional[List[Tuple[int, int]]] = None
     special_token_offsets: Optional[List[int]] = None
-    is_embed_cumsum: Optional[torch.Tensor] = None
+    embed_mask_cumsum: Optional[torch.Tensor] = None
 
     num_cached_mm_tokens: Optional[int] = None
     num_mm_tokens_in_chunk: Optional[int] = None
@@ -279,8 +279,8 @@ class MultimodalRuntimeData:
             )
 
         # CUMSUM path: preferred when mask is available.
-        if self.is_embed_cumsum is not None:
-            cs = self.is_embed_cumsum
+        if self.embed_mask_cumsum is not None:
+            cs = self.embed_mask_cumsum
             self.num_cached_mm_tokens = (int(cs[self.past_seen_token_num - 1])
                                          if self.past_seen_token_num > 0 else 0)
             self.num_mm_tokens_in_chunk = (int(cs[self.chunk_end_pos - 1]) -
@@ -294,7 +294,7 @@ class MultimodalRuntimeData:
         # LEGACY interval-arithmetic path. Requires mm_contiguous_spans.
         if self.mm_contiguous_spans is None:
             raise ValueError(
-                "MultimodalRuntimeData requires either is_embed_cumsum or "
+                "MultimodalRuntimeData requires either embed_mask_cumsum or "
                 "mm_contiguous_spans; both were None.")
 
         if self.total_mm_tokens_in_request is None:
@@ -1126,7 +1126,7 @@ def find_contiguous_mm_spans(
     return contiguous_spans, special_token_offsets
 
 
-def compute_per_unit_is_embeds(
+def compute_per_unit_embed_masks(
     input_ids: Union[torch.Tensor, List[int], np.ndarray],
     contiguous_spans: List[Tuple[int, int]],
     vocab_size: Optional[int] = None,
@@ -1137,7 +1137,7 @@ def compute_per_unit_is_embeds(
 
     Companion to ``find_contiguous_mm_spans`` — keeps the producer API back-compat
     (still 2-tuple) while providing the per-unit mask needed for
-    MultimodalInput.multimodal_is_embeds. See slop/mm_is_embed_migration/goals.md §3.1.
+    MultimodalInput.multimodal_embed_mask. See slop/mm_is_embed_migration/goals.md §3.1.
     """
     if not isinstance(input_ids, torch.Tensor):
         if isinstance(input_ids, list):

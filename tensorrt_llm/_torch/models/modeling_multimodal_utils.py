@@ -359,7 +359,7 @@ def fuse_input_embeds(
         mm_embeds: List[(mm_total_length1, hidden_dim), ..., (mm_total_lengthi, hidden_dim)].
         mm_token_ids: possible token ids for multimodal tokens, if known. If not known and set to None, it is assumed that the multimodal tokens are out-of-vocabulary tokens.
         extra_embeds: Optional list of extra embed tensors for models that support it (e.g., Qwen3-VL/Qwen3-MoE-VL).
-        multimodal_params: Optional per-request MultimodalParams. When provided, the fuser takes the mask path: it reads (and if necessary materializes) MultimodalInput.is_embed_flat per request and derives text/mm indices from the per-chunk slice, bypassing the vocab-predicate filter. This path excludes inline specials by construction.
+        multimodal_params: Optional per-request MultimodalParams. When provided, the fuser takes the mask path: it reads (and if necessary materializes) MultimodalInput.embed_mask_flat per request and derives text/mm indices from the per-chunk slice, bypassing the vocab-predicate filter. This path excludes inline specials by construction.
     Returns:
         - If (1) JIT test run, (2) non-multimodal run, i.e. all text-only requests, either context or generation phase (3) multimodal run, all requests in generation phase --> there is no multimodal data, return only the input_ids
         - If (4) multimodal run, mixed batch of context and generation requests, each context request has a multimodal feature --> return only the fused input_embeds of shape [total length, hidden_dim]. For text tokens, LLM embedding layer has already run.
@@ -383,18 +383,18 @@ def fuse_input_embeds(
             rt = p.multimodal_runtime
             past = rt.past_seen_token_num if rt is not None else 0
             end = rt.chunk_end_pos if rt is not None else None
-            if mi.is_embed_flat is None:
+            if mi.embed_mask_flat is None:
                 chunk_len = (end -
                              past) if end is not None else input_ids.shape[0]
                 req_prompt = input_ids[cursor:cursor + chunk_len]
-                mi.materialize_is_embed(
+                mi.materialize_embed_mask(
                     prompt_token_ids=req_prompt,
                     vocab_size=embedding_layer.num_embeddings,
                     mm_token_ids=mm_token_ids,
                 )
             if end is None:
-                end = mi.is_embed_flat.shape[0]
-            slices.append(mi.is_embed_flat[past:end].to(input_ids.device))
+                end = mi.embed_mask_flat.shape[0]
+            slices.append(mi.embed_mask_flat[past:end].to(input_ids.device))
             cursor += (end - past)
         mm_mask = torch.cat(slices) if len(slices) > 1 else slices[0]
         mm_token_indices = torch.where(mm_mask)[0]

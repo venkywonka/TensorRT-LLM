@@ -87,7 +87,7 @@ _RESERVED_MM_DATA_KEYS = frozenset(
         # Consumed by _store_prefill_multimodal_metadata to build
         # mm_chunk_embed_mask; must NOT leak into the generic extra_args dict
         # (entries there are expected to be tensors, not list[tensor]).
-        "multimodal_is_embeds",
+        "multimodal_embed_mask",
     }
 )
 
@@ -617,9 +617,9 @@ class ADEngine(ModelEngine):
         flat_start_list: List[int] = []
         count_list: List[int] = []
         cumsum_total_mm = 0
-        # is_embed mask path: concatenate per-request chunk-sliced flat masks.
+        # Embed-mask path: concatenate per-request chunk-sliced flat masks.
         # Populated only for requests whose py_multimodal_data carries
-        # multimodal_is_embeds (per-unit bool masks). See
+        # multimodal_embed_mask (per-unit bool masks). See
         # slop/mm_is_embed_migration/goals.md §5.4.
         mm_chunk_embed_mask_flat: List[bool] = []
         mm_chunk_embed_mask_cu_seqlen: List[int] = [0]
@@ -661,10 +661,10 @@ class ADEngine(ModelEngine):
             )
             mm_special_offsets_flat.extend(list(special_offsets))
 
-            # Stitch per-unit multimodal_is_embeds into a chunk-local bool
+            # Stitch per-unit multimodal_embed_mask into a chunk-local bool
             # slice. Positions outside any unit default to False (text).
             per_unit_masks = (
-                req.py_multimodal_data.get("multimodal_is_embeds")
+                req.py_multimodal_data.get("multimodal_embed_mask")
                 if req.py_multimodal_data
                 else None
             )
@@ -746,12 +746,12 @@ class ADEngine(ModelEngine):
         extra_args["mm_special_offsets"] = [
             torch.tensor(mm_special_offsets_flat, dtype=torch.int32, device="cpu")
         ]
-        # is_embed mask path: emit only when at least one request contributed a
+        # Embed-mask path: emit only when at least one request contributed a
         # per-unit mask. cu_seqlen has N+1 entries (0-indexed running sum) so
         # downstream consumers can split the flat mask back into per-request
         # slices without a separate length array.
         if any(
-            req.py_multimodal_data and "multimodal_is_embeds" in req.py_multimodal_data
+            req.py_multimodal_data and "multimodal_embed_mask" in req.py_multimodal_data
             for req in prefill_requests
         ):
             extra_args["mm_chunk_embed_mask"] = [

@@ -396,8 +396,8 @@ def test_ad_engine_stages_mm_chunk_bounds_for_multimodal_block_reuse():
     cache_seq_interface.shutdown()
 
 
-def test_ad_engine_stages_mm_chunk_embed_mask_from_is_embeds():
-    """When req.py_multimodal_data carries multimodal_is_embeds (per-unit bool
+def test_ad_engine_stages_mm_chunk_embed_mask_from_mask_field():
+    """When req.py_multimodal_data carries multimodal_embed_mask (per-unit bool
     masks), _store_prefill_multimodal_metadata emits the chunk-sliced flat
     embed mask as an extra_args tensor so the exported VLM wrapper can consume
     it without reconstructing from spans+offsets.
@@ -434,7 +434,7 @@ def test_ad_engine_stages_mm_chunk_embed_mask_from_is_embeds():
     req.multimodal_lengths = [4]
     req.py_multimodal_data = {
         "mm_contiguous_spans": [(2, 4)],
-        "multimodal_is_embeds": [torch.tensor([True, True, False, True])],
+        "multimodal_embed_mask": [torch.tensor([True, True, False, True])],
     }
 
     scheduled_requests = ScheduledRequests()
@@ -445,7 +445,7 @@ def test_ad_engine_stages_mm_chunk_embed_mask_from_is_embeds():
     named_args = cache_seq_interface.named_args
     assert "mm_chunk_embed_mask" in named_args, (
         "AutoDeploy must stage mm_chunk_embed_mask for wrappers that consume "
-        "the is_embed mask directly."
+        "the embed mask directly."
     )
     assert "mm_chunk_embed_mask_cu_seqlen" in named_args, (
         "Per-request boundaries for the flat mask are required so multi-request "

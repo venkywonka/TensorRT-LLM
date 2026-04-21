@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-"""Tests for MultimodalInput.materialize_is_embed and derived views.
+"""Tests for MultimodalInput.materialize_embed_mask and derived views.
 
 Each test gates a specific production branch — see
 slop/mm_is_embed_migration/goals.md §7.1 and plan.md Commit 1.
@@ -12,8 +12,8 @@ import torch
 from tensorrt_llm.inputs.multimodal import MultimodalInput
 
 
-def test_materialize_is_embed_vocab_predicate():
-    """vocab_size branch: is_embed_flat == (prompt_token_ids >= vocab_size).
+def test_materialize_embed_mask_vocab_predicate():
+    """vocab_size branch: embed_mask_flat == (prompt_token_ids >= vocab_size).
 
     Gates the zero-regression predicate — byte-identical to legacy
     filter_mm_token_from_input_ids behavior when only vocab_size is known.
@@ -26,12 +26,12 @@ def test_materialize_is_embed_vocab_predicate():
         multimodal_positions=[2],
         multimodal_lengths=[3],
     )
-    mm_input.materialize_is_embed(prompt, vocab_size=vocab_size)
+    mm_input.materialize_embed_mask(prompt, vocab_size=vocab_size)
     expected = prompt >= vocab_size
-    assert torch.equal(mm_input.is_embed_flat, expected)
+    assert torch.equal(mm_input.embed_mask_flat, expected)
 
 
-def test_materialize_is_embed_mm_token_ids():
+def test_materialize_embed_mask_mm_token_ids():
     """Isin branch: mask == isin(prompt, mm_token_ids)."""
     vocab_size = 1000
     mm_token_ids = torch.tensor([500, 501])
@@ -41,12 +41,12 @@ def test_materialize_is_embed_mm_token_ids():
         multimodal_positions=[1],
         multimodal_lengths=[3],
     )
-    mm_input.materialize_is_embed(prompt, vocab_size=vocab_size, mm_token_ids=mm_token_ids)
+    mm_input.materialize_embed_mask(prompt, vocab_size=vocab_size, mm_token_ids=mm_token_ids)
     expected = torch.tensor([False, True, True, True, False, True])
-    assert torch.equal(mm_input.is_embed_flat, expected)
+    assert torch.equal(mm_input.embed_mask_flat, expected)
 
 
-def test_materialize_is_embed_specials_excluded():
+def test_materialize_embed_mask_specials_excluded():
     """Specials branch: is_embed is False at special-token positions.
 
     Even though specials are OOV tokens, the mask must exclude them so the
@@ -60,14 +60,14 @@ def test_materialize_is_embed_specials_excluded():
         multimodal_lengths=[6],
     )
     mm_special_token_ids = torch.tensor([2000])
-    mm_input.materialize_is_embed(
+    mm_input.materialize_embed_mask(
         prompt, vocab_size=vocab_size, mm_special_token_ids=mm_special_token_ids
     )
     expected = torch.tensor([False, True, True, False, True, True, True, False])
-    assert torch.equal(mm_input.is_embed_flat, expected)
+    assert torch.equal(mm_input.embed_mask_flat, expected)
 
 
-def test_materialize_is_embed_idempotent():
+def test_materialize_embed_mask_idempotent():
     """Second call returns the same cached tensor object (not re-computed)."""
     vocab_size = 1000
     prompt = torch.tensor([10, 1001, 1002, 20])
@@ -76,12 +76,12 @@ def test_materialize_is_embed_idempotent():
         multimodal_positions=[1],
         multimodal_lengths=[2],
     )
-    first = mm_input.materialize_is_embed(prompt, vocab_size=vocab_size)
-    second = mm_input.materialize_is_embed(prompt, vocab_size=vocab_size)
+    first = mm_input.materialize_embed_mask(prompt, vocab_size=vocab_size)
+    second = mm_input.materialize_embed_mask(prompt, vocab_size=vocab_size)
     assert first is second
 
 
-def test_materialize_is_embed_per_unit_stitching():
+def test_materialize_embed_mask_per_unit_stitching():
     """Per-unit masks stitch into the correct flat mask.
 
     Text positions are False; inline specials inside a unit are False;
@@ -95,13 +95,13 @@ def test_materialize_is_embed_per_unit_stitching():
         multimodal_hashes=[[0] * 8, [0] * 8],
         multimodal_positions=[2, 7],
         multimodal_lengths=[4, 3],
-        multimodal_is_embeds=[
+        multimodal_embed_mask=[
             torch.tensor([True, False, True, True]),
             torch.tensor([True, True, False]),
         ],
     )
     prompt = torch.zeros(prompt_seq_len, dtype=torch.int64)
-    mm_input.materialize_is_embed(prompt, vocab_size=999999)
+    mm_input.materialize_embed_mask(prompt, vocab_size=999999)
     expected = torch.tensor(
         [
             False,
@@ -116,16 +116,19 @@ def test_materialize_is_embed_per_unit_stitching():
             False,
         ]
     )
-    assert torch.equal(mm_input.is_embed_flat, expected)
+    assert torch.equal(mm_input.embed_mask_flat, expected)
 
 
-def test_compute_per_unit_is_embeds():
+def test_compute_per_unit_embed_masks():
     """Companion helper builds per-unit bool masks; specials excluded.
 
     Specials are INCLUDED in span lengths (outer bounding box) but EXCLUDED
     from the per-unit mask.
     """
-    from tensorrt_llm.inputs.multimodal import compute_per_unit_is_embeds, find_contiguous_mm_spans
+    from tensorrt_llm.inputs.multimodal import (
+        compute_per_unit_embed_masks,
+        find_contiguous_mm_spans,
+    )
 
     vocab_size = 1000
     # Mistral-shape: [text, img, img, special, img, img, img, text]
@@ -138,7 +141,7 @@ def test_compute_per_unit_is_embeds():
     )
     assert spans == [(1, 6)]
     assert offsets == [2]
-    per_unit = compute_per_unit_is_embeds(
+    per_unit = compute_per_unit_embed_masks(
         input_ids=prompt,
         contiguous_spans=spans,
         vocab_size=vocab_size,
@@ -151,10 +154,10 @@ def test_compute_per_unit_is_embeds():
     )
 
 
-def test_compute_mm_is_embed_if_absent_populates_py_multimodal_data():
+def test_compute_mm_embed_mask_if_absent_populates_py_multimodal_data():
     """Producer writes per-unit masks into py_multimodal_data.
 
-    Key used: 'multimodal_is_embeds'. Covers Task 1.8 plumbing.
+    Key used: 'multimodal_embed_mask'. Covers Task 1.8 plumbing.
     """
     from tensorrt_llm.inputs.registry import compute_mm_contiguous_spans_if_absent
 
@@ -173,10 +176,10 @@ def test_compute_mm_is_embed_if_absent_populates_py_multimodal_data():
     compute_mm_contiguous_spans_if_absent(prompt_token_ids, extra, FakeProcessor())
 
     mm_data = extra["multimodal_data"]
-    assert "multimodal_is_embeds" in mm_data
-    assert len(mm_data["multimodal_is_embeds"]) == 1
+    assert "multimodal_embed_mask" in mm_data
+    assert len(mm_data["multimodal_embed_mask"]) == 1
     assert torch.equal(
-        mm_data["multimodal_is_embeds"][0],
+        mm_data["multimodal_embed_mask"][0],
         torch.tensor([True, True, False, True, True, True]),
     )
 
@@ -188,13 +191,13 @@ def test_runtime_data_cumsum_math_simplest():
     """
     from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData
 
-    # All-True mask of length 5. is_embed_cumsum = [1, 2, 3, 4, 5].
+    # All-True mask of length 5. embed_mask_cumsum = [1, 2, 3, 4, 5].
     is_embed = torch.ones(5, dtype=torch.bool)
     cumsum = is_embed.to(torch.int64).cumsum(0)
     rt = MultimodalRuntimeData(
         past_seen_token_num=0,
         chunk_end_pos=5,
-        is_embed_cumsum=cumsum,
+        embed_mask_cumsum=cumsum,
     )
     assert rt.num_cached_mm_tokens == 0
     assert rt.num_mm_tokens_in_chunk == 5
@@ -211,7 +214,7 @@ def test_runtime_data_cumsum_math_partial_chunk():
     rt = MultimodalRuntimeData(
         past_seen_token_num=0,
         chunk_end_pos=4,
-        is_embed_cumsum=cumsum,
+        embed_mask_cumsum=cumsum,
     )
     assert rt.num_cached_mm_tokens == 0
     assert rt.num_mm_tokens_in_chunk == 3
@@ -227,7 +230,7 @@ def test_runtime_data_cumsum_math_partial_cache():
     rt = MultimodalRuntimeData(
         past_seen_token_num=3,  # cumsum[2] = 2 -> 2 cached
         chunk_end_pos=7,  # cumsum[6] = 5 -> in_chunk = 5-2 = 3
-        is_embed_cumsum=cumsum,
+        embed_mask_cumsum=cumsum,
     )
     assert rt.num_cached_mm_tokens == 2
     assert rt.num_mm_tokens_in_chunk == 3
@@ -251,13 +254,13 @@ def test_runtime_data_cumsum_math_with_specials_mistral_shape():
     cumsum = is_embed.to(torch.int64).cumsum(0)
 
     # Chunk 0: pos 0..5 -> covers mask[0..4]: [F,T,T,F,T] -> 3 embeds.
-    rt0 = MultimodalRuntimeData(past_seen_token_num=0, chunk_end_pos=5, is_embed_cumsum=cumsum)
+    rt0 = MultimodalRuntimeData(past_seen_token_num=0, chunk_end_pos=5, embed_mask_cumsum=cumsum)
     assert rt0.num_cached_mm_tokens == 0
     assert rt0.num_mm_tokens_in_chunk == 3
     assert rt0.total_embeds_in_request == 5
 
     # Chunk 1: pos 5..8 (rest of the request after chunk 0 was processed).
-    rt1 = MultimodalRuntimeData(past_seen_token_num=5, chunk_end_pos=8, is_embed_cumsum=cumsum)
+    rt1 = MultimodalRuntimeData(past_seen_token_num=5, chunk_end_pos=8, embed_mask_cumsum=cumsum)
     assert rt1.num_cached_mm_tokens == 3
     assert rt1.num_mm_tokens_in_chunk == 2
     assert rt1.total_embeds_in_request == 5
@@ -269,14 +272,14 @@ def test_runtime_data_cumsum_math_negative_past_seen_rejected():
 
     cumsum = torch.arange(1, 6, dtype=torch.int64)
     with pytest.raises(ValueError, match="past_seen_token_num must be non-negative"):
-        MultimodalRuntimeData(past_seen_token_num=-1, chunk_end_pos=5, is_embed_cumsum=cumsum)
+        MultimodalRuntimeData(past_seen_token_num=-1, chunk_end_pos=5, embed_mask_cumsum=cumsum)
 
 
 def test_runtime_data_requires_either_cumsum_or_spans():
     """Guard: must supply EITHER cumsum OR legacy spans."""
     from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData
 
-    with pytest.raises(ValueError, match="requires either is_embed_cumsum or"):
+    with pytest.raises(ValueError, match="requires either embed_mask_cumsum or"):
         MultimodalRuntimeData(past_seen_token_num=0, chunk_end_pos=5)
 
 
@@ -297,13 +300,13 @@ def test_get_chunk_embed_indices(chunk_start, chunk_end, expected_lo_hi):
         multimodal_hashes=[[0] * 8, [0] * 8],
         multimodal_positions=[2, 7],
         multimodal_lengths=[4, 3],
-        multimodal_is_embeds=[
+        multimodal_embed_mask=[
             torch.tensor([True, False, True, True]),
             torch.tensor([True, True, False]),
         ],
     )
     prompt = torch.zeros(prompt_seq_len, dtype=torch.int64)
-    mm_input.materialize_is_embed(prompt, vocab_size=999999)
-    assert mm_input.is_embed_cumsum.dtype == torch.int64
-    assert mm_input.is_embed_cumsum.shape == (prompt_seq_len,)
+    mm_input.materialize_embed_mask(prompt, vocab_size=999999)
+    assert mm_input.embed_mask_cumsum.dtype == torch.int64
+    assert mm_input.embed_mask_cumsum.shape == (prompt_seq_len,)
     assert mm_input.get_chunk_embed_indices(chunk_start, chunk_end) == expected_lo_hi

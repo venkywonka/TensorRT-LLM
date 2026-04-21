@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-"""Consumer-side unit tests for the is_embed mask path.
+"""Consumer-side unit tests for the multimodal embed-mask path.
 
 See slop/mm_is_embed_migration/goals.md §7.2 and plan.md Commits 3-4.
 """
@@ -16,26 +16,26 @@ from tensorrt_llm.inputs.multimodal import MultimodalInput, MultimodalParams, Mu
 
 def _mk_params(
     *,
-    multimodal_is_embeds,
+    multimodal_embed_mask,
     multimodal_positions,
     multimodal_lengths,
     prompt_seq_len,
     past,
     chunk_end,
 ):
-    """Construct MultimodalParams with a materialized is_embed_cumsum."""
+    """Construct MultimodalParams with a materialized embed_mask_cumsum."""
     mi = MultimodalInput(
         multimodal_hashes=[[0] * 8] * len(multimodal_lengths),
         multimodal_positions=multimodal_positions,
         multimodal_lengths=multimodal_lengths,
-        multimodal_is_embeds=multimodal_is_embeds,
+        multimodal_embed_mask=multimodal_embed_mask,
     )
     prompt = torch.zeros(prompt_seq_len, dtype=torch.int64)
-    mi.materialize_is_embed(prompt, vocab_size=999999)
+    mi.materialize_embed_mask(prompt, vocab_size=999999)
     rt = MultimodalRuntimeData(
         past_seen_token_num=past,
         chunk_end_pos=chunk_end,
-        is_embed_cumsum=mi.is_embed_cumsum,
+        embed_mask_cumsum=mi.embed_mask_cumsum,
     )
     return MultimodalParams(multimodal_input=mi, multimodal_runtime=rt)
 
@@ -49,10 +49,10 @@ def test_find_input_mm_embeds_chunked_partial_item():
     # Unit at positions 2..7 (length 6) with a special at relative pos 2.
     # Per-unit mask [T, T, F, T, T, T] -> 5 embeds total; embed positions
     # (absolute) = {2, 3, 5, 6, 7}.
-    # Encoder output row[i] corresponds to the i-th True in is_embed_flat.
+    # Encoder output row[i] corresponds to the i-th True in embed_mask_flat.
     encoder_out = torch.arange(5 * 4, dtype=torch.float32).reshape(5, 4)
     params = _mk_params(
-        multimodal_is_embeds=[torch.tensor([True, True, False, True, True, True])],
+        multimodal_embed_mask=[torch.tensor([True, True, False, True, True, True])],
         multimodal_positions=[2],
         multimodal_lengths=[6],
         prompt_seq_len=10,
@@ -69,7 +69,7 @@ def test_find_input_mm_embeds_partial_cache_reuse():
     """past_seen > 0 — B returns only uncached encoder rows."""
     encoder_out = torch.arange(5 * 4, dtype=torch.float32).reshape(5, 4)
     params = _mk_params(
-        multimodal_is_embeds=[torch.tensor([True, True, False, True, True, True])],
+        multimodal_embed_mask=[torch.tensor([True, True, False, True, True, True])],
         multimodal_positions=[2],
         multimodal_lengths=[6],
         prompt_seq_len=10,
@@ -85,7 +85,7 @@ def test_find_input_mm_embeds_all_cached_returns_empty():
     """All embeds cached and beyond current chunk — B returns empty list."""
     encoder_out = torch.arange(3 * 4, dtype=torch.float32).reshape(3, 4)
     params = _mk_params(
-        multimodal_is_embeds=[torch.tensor([True, True, True])],
+        multimodal_embed_mask=[torch.tensor([True, True, True])],
         multimodal_positions=[1],
         multimodal_lengths=[3],
         prompt_seq_len=5,
@@ -134,7 +134,7 @@ def test_fuse_input_embeds_mistral_specials_no_count_mismatch():
     # Unit bounding box = positions [1..4], length 4. is_embed mask:
     # [T, T, F, T] — 3 embed rows (non-special positions).
     mm_params = _mk_params(
-        multimodal_is_embeds=[torch.tensor([True, True, False, True])],
+        multimodal_embed_mask=[torch.tensor([True, True, False, True])],
         multimodal_positions=[1],
         multimodal_lengths=[4],
         prompt_seq_len=5,
@@ -176,9 +176,9 @@ def test_fuse_input_embeds_backstop_materializes_when_intake_skipped():
         multimodal_hashes=[[0] * 8],
         multimodal_positions=[1],
         multimodal_lengths=[2],
-        # Intentionally NOT populating multimodal_is_embeds -> mask is None.
+        # Intentionally NOT populating multimodal_embed_mask -> mask is None.
     )
-    assert mi.is_embed_flat is None, "precondition: mask must not be materialized yet"
+    assert mi.embed_mask_flat is None, "precondition: mask must not be materialized yet"
     params = MultimodalParams(multimodal_input=mi, multimodal_runtime=None)
     out = fuse_input_embeds(
         embedding_layer=embedding_layer,
@@ -187,8 +187,8 @@ def test_fuse_input_embeds_backstop_materializes_when_intake_skipped():
         multimodal_params=[params],
     )
     _, input_embeds = out[0], out[1]
-    assert mi.is_embed_flat is not None, "backstop must have populated is_embed_flat"
-    assert torch.equal(mi.is_embed_flat, torch.tensor([False, True, True, False]))
+    assert mi.embed_mask_flat is not None, "backstop must have populated embed_mask_flat"
+    assert torch.equal(mi.embed_mask_flat, torch.tensor([False, True, True, False]))
     assert input_embeds.shape == (4, hidden_dim)
     assert torch.equal(input_embeds[1], mm_embed[0])
     assert torch.equal(input_embeds[2], mm_embed[1])
