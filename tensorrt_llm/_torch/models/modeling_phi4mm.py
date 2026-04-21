@@ -1069,9 +1069,11 @@ class Phi4MMForCausalLM(transformers.PreTrainedModel):
             f"num_context_requests: {num_context_requests}, num_generation_requests: {num_generation_requests}"
         )
 
-        multimodal_params = kwargs.get("multimodal_params", [])
+        multimodal_params = kwargs.pop("multimodal_params", [])
         mm_embedding = []
+        mm_params_for_fuse = None
         if len(multimodal_params) > 0:
+            mm_params_for_fuse = multimodal_params[:num_context_requests]
             if not _is_disagg():
                 encoder_kwargs = {
                     "mm_token_ids": self.mm_token_ids,
@@ -1094,6 +1096,7 @@ class Phi4MMForCausalLM(transformers.PreTrainedModel):
             input_ids,
             mm_embedding,
             mm_token_ids=self.mm_token_ids,
+            multimodal_params=mm_params_for_fuse,
             **kwargs,
         )
 

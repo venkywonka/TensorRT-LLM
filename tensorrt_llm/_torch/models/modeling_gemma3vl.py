@@ -283,7 +283,7 @@ class Gemma3VLM(PreTrainedModel):
             f"[Gemma3Model::forward]{num_context_requests=}, {num_generation_requests=}"
         )
 
-        multimodal_params = kwargs.get("multimodal_params", [])
+        multimodal_params = kwargs.pop("multimodal_params", [])
         pixel_values = [
             multimodal_param.multimodal_data["image"]["pixel_values"]
             for multimodal_param in multimodal_params
@@ -304,6 +304,7 @@ class Gemma3VLM(PreTrainedModel):
             input_ids=input_ids,
             mm_embeds=mm_embeds,
             mm_token_ids=self.image_token_ids,
+            multimodal_params=multimodal_params if multimodal_params else None,
             **kwargs,
         )
         logits = self.llm.forward(

@@ -2095,9 +2095,11 @@ class NemotronH_Nano_VL_V2(transformers.PreTrainedModel):
             f"num_context_requests: {num_context_requests}, num_generation_requests: {num_generation_requests}"
         )
 
-        multimodal_params = kwargs.get("multimodal_params", [])
+        multimodal_params = kwargs.pop("multimodal_params", [])
         mm_embedding = []
+        mm_params_for_fuse = None
         if len(multimodal_params) > 0:
+            mm_params_for_fuse = multimodal_params[:num_context_requests]
             if not _is_disagg():
                 mm_embedding = get_multimodal_embeddings(
                     encoder_forward_fn=self._encode_multimodal,
@@ -2135,6 +2137,7 @@ class NemotronH_Nano_VL_V2(transformers.PreTrainedModel):
             input_ids,
             mm_embedding,
             mm_token_ids=torch.tensor(mm_token_ids_list, dtype=torch.int32),
+            multimodal_params=mm_params_for_fuse,
         )
 
         output_prob = self.llm.forward(

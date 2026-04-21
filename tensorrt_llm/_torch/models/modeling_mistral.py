@@ -687,16 +687,17 @@ class Mistral3VLM(PreTrainedModel):
         num_context_requests, num_generation_requests = attn_metadata.num_contexts, attn_metadata.num_generations
         logger.debug(f"{num_context_requests=}, {num_generation_requests=}")
 
-        multimodal_params = kwargs.get("multimodal_params", [])
+        multimodal_params = kwargs.pop("multimodal_params", [])
         mm_embeds = []
         multimodal_params_len = len(multimodal_params)
+        mm_params_for_fuse = None
         if multimodal_params_len > 0:
+            mm_params_for_fuse = multimodal_params[:num_context_requests]
             mm_embeds = get_multimodal_embeddings(
                 encoder_forward_fn=self._vision_forward,
-                multimodal_params=multimodal_params[:num_context_requests],
+                multimodal_params=mm_params_for_fuse,
             )
-            mm_embeds = find_input_mm_embeds(
-                mm_embeds, multimodal_params[:num_context_requests])
+            mm_embeds = find_input_mm_embeds(mm_embeds, mm_params_for_fuse)
 
         with nvtx_range("[mistral] Fuse input embeds"):
             input_ids, inputs_embeds = fuse_input_embeds(
@@ -704,6 +705,7 @@ class Mistral3VLM(PreTrainedModel):
                 input_ids=input_ids,
                 mm_embeds=mm_embeds,
                 mm_token_ids=self._image_token_ids,
+                multimodal_params=mm_params_for_fuse,
                 **kwargs,
             )
 

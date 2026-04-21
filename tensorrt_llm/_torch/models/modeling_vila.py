@@ -1208,7 +1208,7 @@ class VilaModel(PreTrainedModel):
         """
 
         num_context_requests, num_generation_requests = attn_metadata.num_contexts, attn_metadata.num_generations
-        multimodal_params = kwargs.get("multimodal_params", [])
+        multimodal_params = kwargs.pop("multimodal_params", [])
         mm_embeds = []
         if len(multimodal_params) > 0:
             mm_embeds = [
@@ -1217,7 +1217,11 @@ class VilaModel(PreTrainedModel):
             ]
 
         input_ids, inputs_embeds = fuse_input_embeds(
-            self.llm.model.embed_tokens, input_ids, mm_embeds, **kwargs)
+            self.llm.model.embed_tokens,
+            input_ids,
+            mm_embeds,
+            multimodal_params=multimodal_params if multimodal_params else None,
+            **kwargs)
         logits = self.llm.forward(attn_metadata=attn_metadata,
                                   input_ids=input_ids,
                                   position_ids=position_ids,
