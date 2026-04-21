@@ -84,6 +84,10 @@ _RESERVED_MM_DATA_KEYS = frozenset(
         "layout_metadata",
         "mm_contiguous_spans",
         "special_token_offsets",
+        # Consumed by _store_prefill_multimodal_metadata to build
+        # mm_chunk_embed_mask; must NOT leak into the generic extra_args dict
+        # (entries there are expected to be tensors, not list[tensor]).
+        "multimodal_is_embeds",
     }
 )
 
@@ -613,6 +617,12 @@ class ADEngine(ModelEngine):
         flat_start_list: List[int] = []
         count_list: List[int] = []
         cumsum_total_mm = 0
+        # is_embed mask path: concatenate per-request chunk-sliced flat masks.
+        # Populated only for requests whose py_multimodal_data carries
+        # multimodal_is_embeds (per-unit bool masks). See
+        # slop/mm_is_embed_migration/goals.md §5.4.
+        mm_chunk_embed_mask_flat: List[bool] = []
+        mm_chunk_embed_mask_cu_seqlen: List[int] = [0]
 
         for i, req in enumerate(prefill_requests):
             begin_compute = input_pos[i]
@@ -650,6 +660,33 @@ class ADEngine(ModelEngine):
                 mm_special_offsets_cu_seqlen[-1] + len(special_offsets)
             )
             mm_special_offsets_flat.extend(list(special_offsets))
+
+            # Stitch per-unit multimodal_is_embeds into a chunk-local bool
+            # slice. Positions outside any unit default to False (text).
+            per_unit_masks = (
+                req.py_multimodal_data.get("multimodal_is_embeds")
+                if req.py_multimodal_data
+                else None
+            )
+            chunk_len = end_compute - begin_compute
+            if per_unit_masks is not None and chunk_len > 0:
+                full_mask = [False] * len(req.get_tokens(0))
+                for j, per_unit in enumerate(per_unit_masks):
+                    unit_pos = int(mm_pos_list[j])
+                    unit_len = int(mm_len_list[j])
+                    if per_unit is None:
+                        for k in range(unit_len):
+                            full_mask[unit_pos + k] = True
+                    else:
+                        pu = per_unit.tolist() if hasattr(per_unit, "tolist") else list(per_unit)
+                        for k in range(unit_len):
+                            full_mask[unit_pos + k] = bool(pu[k])
+                mm_chunk_embed_mask_flat.extend(full_mask[begin_compute:end_compute])
+                mm_chunk_embed_mask_cu_seqlen.append(mm_chunk_embed_mask_cu_seqlen[-1] + chunk_len)
+            else:
+                # Request has no per-unit mask; append 0-length marker so
+                # cu_seqlen stays aligned with request order.
+                mm_chunk_embed_mask_cu_seqlen.append(mm_chunk_embed_mask_cu_seqlen[-1])
             if not mm_pos or not mm_len:
                 flat_start_list.append(0)
                 count_list.append(0)
@@ -709,6 +746,20 @@ class ADEngine(ModelEngine):
         extra_args["mm_special_offsets"] = [
             torch.tensor(mm_special_offsets_flat, dtype=torch.int32, device="cpu")
         ]
+        # is_embed mask path: emit only when at least one request contributed a
+        # per-unit mask. cu_seqlen has N+1 entries (0-indexed running sum) so
+        # downstream consumers can split the flat mask back into per-request
+        # slices without a separate length array.
+        if any(
+            req.py_multimodal_data and "multimodal_is_embeds" in req.py_multimodal_data
+            for req in prefill_requests
+        ):
+            extra_args["mm_chunk_embed_mask"] = [
+                torch.tensor(mm_chunk_embed_mask_flat, dtype=torch.bool, device="cpu")
+            ]
+            extra_args["mm_chunk_embed_mask_cu_seqlen"] = [
+                torch.tensor(mm_chunk_embed_mask_cu_seqlen, dtype=torch.int32, device="cpu")
+            ]
         # Export multimodal slice bounds whenever the current prefill step only needs a
         # subset of the request's multimodal embeddings. This is required for regular
         # chunked prefill, but also for KV-cache reuse where begin_compute > 0 even when

@@ -396,6 +396,73 @@ def test_ad_engine_stages_mm_chunk_bounds_for_multimodal_block_reuse():
     cache_seq_interface.shutdown()
 
 
+def test_ad_engine_stages_mm_chunk_embed_mask_from_is_embeds():
+    """When req.py_multimodal_data carries multimodal_is_embeds (per-unit bool
+    masks), _store_prefill_multimodal_metadata emits the chunk-sliced flat
+    embed mask as an extra_args tensor so the exported VLM wrapper can consume
+    it without reconstructing from spans+offsets.
+
+    See slop/mm_is_embed_migration/goals.md §5.4 and plan.md Commit 5.
+    """
+    device = torch.device("cuda")
+    max_seq_len = 64
+    max_batch_size = 8
+
+    kv_cache_config = KvCacheConfig(tokens_per_block=8)
+    cache_seq_interface = CachedSequenceInterface(
+        max_seq_len=max_seq_len,
+        max_batch_size=max_batch_size,
+        max_num_tokens=default_max_num_tokens(max_seq_len, max_batch_size),
+        device=device,
+        kv_cache_config=kv_cache_config,
+    )
+    cache_seq_interface.to(device)
+
+    engine = ADEngine(get_inference_model, cache_seq_interface)
+    engine._enable_chunked_prefill = True
+
+    kv_manager = _DummyKVCacheManager(tokens_per_block=8)
+    resource_manager = _DummyResourceManager(kv_manager)
+
+    # Prompt layout: [text, text, u0, u1, u2, u3, text, text]
+    # Unit at pos 2, length 4. Per-unit mask [T,T,F,T] -> special at rel pos 2
+    # (absolute pos 4). Chunk covers absolute positions [4:8] -> mask slice
+    # becomes [F, T, F, F] (pos 4 special, pos 5 embed, pos 6/7 text).
+    tokens = [1, 2, 99, 99, 99, 99, 3, 4]
+    req = _DummyRequest(tokens=tokens, begin=4, size=4, seq_slot=0)
+    req.multimodal_positions = [2]
+    req.multimodal_lengths = [4]
+    req.py_multimodal_data = {
+        "mm_contiguous_spans": [(2, 4)],
+        "multimodal_is_embeds": [torch.tensor([True, True, False, True])],
+    }
+
+    scheduled_requests = ScheduledRequests()
+    scheduled_requests.context_requests_last_chunk.append(req)
+
+    engine._prepare_inputs(scheduled_requests, resource_manager, new_tokens=None)
+
+    named_args = cache_seq_interface.named_args
+    assert "mm_chunk_embed_mask" in named_args, (
+        "AutoDeploy must stage mm_chunk_embed_mask for wrappers that consume "
+        "the is_embed mask directly."
+    )
+    assert "mm_chunk_embed_mask_cu_seqlen" in named_args, (
+        "Per-request boundaries for the flat mask are required so multi-request "
+        "batches can split the concatenated mask."
+    )
+    torch.testing.assert_close(
+        named_args["mm_chunk_embed_mask"].cpu(),
+        torch.tensor([False, True, False, False], dtype=torch.bool),
+    )
+    torch.testing.assert_close(
+        named_args["mm_chunk_embed_mask_cu_seqlen"].cpu(),
+        torch.tensor([0, 4], dtype=torch.int32),
+    )
+
+    cache_seq_interface.shutdown()
+
+
 def test_ad_engine_rejects_mismatched_multimodal_layout_arrays():
     """Per-request multimodal arrays should be validated before flattening."""
     device = torch.device("cuda")
