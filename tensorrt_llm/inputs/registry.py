@@ -785,7 +785,11 @@ def compute_mm_contiguous_spans_if_absent(
     mm_data = extra_processed_inputs.get("multimodal_data")
     if mm_data is None:
         return
-    if "mm_contiguous_spans" in mm_data:
+    # Fast exit if BOTH outputs are already present — other upstream paths
+    # (e.g., the hashing-aware intake) may write one without the other, so we
+    # can't bail on just spans.
+    if ("mm_contiguous_spans" in mm_data
+            and "multimodal_embed_mask" in mm_data):
         return
 
     vocab_size = input_processor.get_vocab_size()
@@ -793,7 +797,7 @@ def compute_mm_contiguous_spans_if_absent(
     if vocab_size is None and mm_token_ids is None:
         logger.debug(
             "compute_mm_contiguous_spans_if_absent: processor provides neither "
-            "vocab_size nor mm_token_ids — skipping span computation.")
+            "vocab_size nor mm_token_ids — skipping span/mask computation.")
         return
 
     mm_special_token_ids = input_processor.get_mm_special_token_ids()
@@ -803,11 +807,12 @@ def compute_mm_contiguous_spans_if_absent(
         mm_token_ids=mm_token_ids,
         mm_special_token_ids=mm_special_token_ids,
     )
-    mm_data["mm_contiguous_spans"] = contiguous_spans
+    if "mm_contiguous_spans" not in mm_data:
+        mm_data["mm_contiguous_spans"] = contiguous_spans
+    else:
+        contiguous_spans = mm_data["mm_contiguous_spans"]
     if special_token_offsets and "special_token_offsets" not in mm_data:
         mm_data["special_token_offsets"] = special_token_offsets
-    # Dual-write per-unit embed masks so the mask-path consumers can rely
-    # on their presence.
     if "multimodal_embed_mask" not in mm_data:
         from tensorrt_llm.inputs.multimodal import compute_per_unit_embed_masks
         mm_data["multimodal_embed_mask"] = compute_per_unit_embed_masks(
@@ -1017,6 +1022,12 @@ def create_input_processor_with_hash(
                 if try_multimodal_hashing:
                     # if trying for first time, set the flag to True
                     input_processor.multimodal_hashing_supported = True
+                # Hashing writes mm_contiguous_spans but not multimodal_embed_mask.
+                # Populate the mask here so partial-iteration consumers (chunked
+                # prefill, KV-cache reuse) have what they need.
+                compute_mm_contiguous_spans_if_absent(prompt_token_ids,
+                                                      extra_processed_inputs,
+                                                      input_processor)
                 return prompt_token_ids, extra_processed_inputs
             except Exception as e:
                 logger.warning(f"Multimodal hashing failed: {e}.")

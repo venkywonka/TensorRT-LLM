@@ -376,7 +376,10 @@ def test_ad_engine_stages_mm_chunk_bounds_for_multimodal_block_reuse():
     req = _DummyRequest(tokens=tokens, begin=4, size=4, seq_slot=0)
     req.multimodal_positions = [2]
     req.multimodal_lengths = [4]
-    req.py_multimodal_data = {"mm_contiguous_spans": [(2, 4)]}
+    # 4-slot unit, all embed (no inline specials) -> mask [T,T,T,T].
+    req.py_multimodal_data = {
+        "multimodal_embed_mask": [torch.tensor([True, True, True, True])],
+    }
 
     scheduled_requests = ScheduledRequests()
     scheduled_requests.context_requests_last_chunk.append(req)

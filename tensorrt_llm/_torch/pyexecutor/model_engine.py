@@ -20,7 +20,7 @@ from tensorrt_llm._utils import (is_trace_enabled, maybe_pin_memory, nvtx_range,
 from tensorrt_llm.bindings.internal.runtime import TaskLayerModuleConfig
 from tensorrt_llm.inputs.multimodal import (MultimodalParams,
                                             MultimodalRuntimeData,
-                                            require_mm_spans_if_needed)
+                                            require_mm_embed_mask_if_needed)
 from tensorrt_llm.inputs.registry import (create_input_processor,
                                           create_input_processor_with_hash)
 from tensorrt_llm.llmapi.llm_args import (CudaGraphConfig, TorchCompileConfig,
@@ -2304,27 +2304,18 @@ class PyTorchModelEngine(ModelEngine):
             num_cached_tokens_per_seq.append(past_seen_token_num)
             request.cached_tokens = num_cached_tokens_per_seq[-1]
 
-            # Multimodal — require spans only when this iteration is partial
-            # (chunked prefill or KV-cache reuse). Non-partial iterations degrade
-            # gracefully when spans are absent; see inputs/multimodal.py.
-            require_mm_spans_if_needed(
+            # Multimodal — require the embed mask only when this iteration is
+            # partial (chunked prefill or KV-cache reuse). Non-partial
+            # iterations degrade gracefully when the mask is absent.
+            require_mm_embed_mask_if_needed(
                 request.py_multimodal_data,
                 begin_compute=past_seen_token_num,
                 end_compute=end_compute,
                 prompt_len=len(all_prompt_tokens),
             )
-            mm_spans = request.py_multimodal_data.get(
-                'mm_contiguous_spans') if request.py_multimodal_data else None
-            # Prefer the embed-mask path (cumsum) when the producer dual-wrote
-            # per-unit masks. Fall back to the legacy span+offsets construction
-            # when the mask is absent (eventual removal once producer dual-write
-            # is the only source).
             mm_embed_masks = request.py_multimodal_data.get(
                 'multimodal_embed_mask') if request.py_multimodal_data else None
             py_multimodal_runtime = None
-            # The mask-path requires per-unit positions and lengths; only take
-            # it when all three are populated (the normal intake case). If any
-            # is missing, fall through to the legacy span path.
             if (mm_embed_masks is not None
                     and request.multimodal_positions is not None
                     and request.multimodal_lengths is not None):
@@ -2341,15 +2332,6 @@ class PyTorchModelEngine(ModelEngine):
                     embed_mask_cumsum=full_mask.to(torch.int64).cumsum(0),
                     past_seen_token_num=past_seen_token_num,
                     chunk_end_pos=end_compute,
-                )
-            elif mm_spans is not None:
-                # Gate on spans (not hashes): Path B emits spans without hashes.
-                py_multimodal_runtime = MultimodalRuntimeData(
-                    mm_contiguous_spans=mm_spans,
-                    past_seen_token_num=past_seen_token_num,
-                    chunk_end_pos=end_compute,
-                    special_token_offsets=request.py_multimodal_data.get(
-                        'special_token_offsets', []),
                 )
 
             multimodal_params = MultimodalParams(

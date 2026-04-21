@@ -230,132 +230,46 @@ class MultimodalInput:
 
 @dataclass
 class MultimodalRuntimeData:
-    """Runtime data for tracking multimodal token caching and reuse per request sequence.
+    """Runtime data for tracking multimodal embed caching and reuse per request sequence.
 
-    Two construction modes (pick one — both cover chunked prefill + KV reuse):
-
-    - CUMSUM (mask-based, preferred): pass ``embed_mask_cumsum`` (from
-      ``MultimodalInput.embed_mask_cumsum``); counts derived via three O(1)
-      cumsum lookups. Supports embed positions that are non-contiguous within
-      a single logical unit (inline specials, interleaved text) natively.
-    - LEGACY (span-based): pass ``mm_contiguous_spans`` + ``special_token_offsets``;
-      counts derived via interval arithmetic. Kept for not-yet-migrated
-      consumers; slated for removal once all call sites use the cumsum path.
+    Constructed from the per-request embed_mask_cumsum produced by the
+    MultimodalInput intake layer; counts are derived via three O(1) cumsum
+    lookups. Supports embed positions that are non-contiguous within a logical
+    unit (inline specials, interleaved text) natively.
 
     Attributes:
         past_seen_token_num: Total tokens already processed in previous iterations (cached)
         chunk_end_pos: End position of the current chunk for chunked prefill
-        embed_mask_cumsum: CUMSUM — int64 prefix sum of embed_mask_flat from MultimodalInput
-        mm_contiguous_spans: LEGACY — list of (start_position, token_count) per run
-        special_token_offsets: LEGACY — indices of specials in the flat MM token union
+        embed_mask_cumsum: int64 prefix sum of embed_mask_flat from MultimodalInput
 
-        num_cached_mm_tokens: Number of MM tokens that are cached (computed)
-        num_mm_tokens_in_chunk: Number of MM tokens in the current chunk (computed)
-        total_mm_tokens_in_request: Total MM tokens (legacy name; kept for back-compat)
-        total_embeds_in_request: Total embed slots (cumsum path; excludes specials)
-
-        num_cached_special_tokens, num_special_tokens_in_chunk, total_special_tokens_in_request:
-            LEGACY — populated only on the legacy span-based path.
+        num_cached_mm_tokens: Number of embeds already cached (computed)
+        num_mm_tokens_in_chunk: Number of embeds in the current chunk (computed)
+        total_embeds_in_request: Total embeds (computed)
     """
     past_seen_token_num: int
     chunk_end_pos: int
-
-    mm_contiguous_spans: Optional[List[Tuple[int, int]]] = None
-    special_token_offsets: Optional[List[int]] = None
-    embed_mask_cumsum: Optional[torch.Tensor] = None
+    embed_mask_cumsum: torch.Tensor
 
     num_cached_mm_tokens: Optional[int] = None
     num_mm_tokens_in_chunk: Optional[int] = None
-    total_mm_tokens_in_request: Optional[int] = None
     total_embeds_in_request: Optional[int] = None
-
-    num_cached_special_tokens: Optional[int] = 0
-    num_special_tokens_in_chunk: Optional[int] = 0
-    total_special_tokens_in_request: Optional[int] = 0
 
     def __post_init__(self):
         if self.past_seen_token_num < 0:
             raise ValueError(
                 f"past_seen_token_num must be non-negative, got {self.past_seen_token_num}"
             )
-
-        # CUMSUM path: preferred when mask is available.
-        if self.embed_mask_cumsum is not None:
-            cs = self.embed_mask_cumsum
-            self.num_cached_mm_tokens = (int(cs[self.past_seen_token_num - 1])
-                                         if self.past_seen_token_num > 0 else 0)
-            self.num_mm_tokens_in_chunk = (int(cs[self.chunk_end_pos - 1]) -
-                                           self.num_cached_mm_tokens
-                                           if self.chunk_end_pos > 0 else 0)
-            self.total_embeds_in_request = int(cs[-1])
-            # Mirror to legacy field name for consumers not yet migrated.
-            self.total_mm_tokens_in_request = self.total_embeds_in_request
-            return
-
-        # LEGACY interval-arithmetic path. Requires mm_contiguous_spans.
-        if self.mm_contiguous_spans is None:
+        if self.embed_mask_cumsum is None:
             raise ValueError(
-                "MultimodalRuntimeData requires either embed_mask_cumsum or "
-                "mm_contiguous_spans; both were None.")
+                "MultimodalRuntimeData requires embed_mask_cumsum.")
 
-        if self.total_mm_tokens_in_request is None:
-            self.total_mm_tokens_in_request = sum(
-                length for _, length in self.mm_contiguous_spans)
-
-        if any(length <= 0 for _, length in self.mm_contiguous_spans):
-            raise ValueError(
-                f"All span lengths must be positive, got {self.mm_contiguous_spans}"
-            )
-
-        if any(pos < 0 for pos, _ in self.mm_contiguous_spans):
-            raise ValueError(
-                f"All span positions must be non-negative, got {self.mm_contiguous_spans}"
-            )
-
-        if self.special_token_offsets is None:
-            self.special_token_offsets = []
-
-        remainder = 0
-        if self.num_cached_mm_tokens is None or self.num_mm_tokens_in_chunk is None:
-            self.num_cached_mm_tokens = 0
-            self.num_mm_tokens_in_chunk = 0
-            for pos, length in self.mm_contiguous_spans:
-                span_end = pos + length
-                if span_end <= self.past_seen_token_num:
-                    self.num_cached_mm_tokens += length
-                elif pos < self.past_seen_token_num:
-                    self.num_cached_mm_tokens += self.past_seen_token_num - pos
-                    self.num_mm_tokens_in_chunk += min(
-                        self.chunk_end_pos, span_end) - self.past_seen_token_num
-                else:
-                    if span_end > self.chunk_end_pos:
-                        if pos < self.chunk_end_pos:
-                            self.num_mm_tokens_in_chunk += self.chunk_end_pos - pos
-                        else:
-                            remainder += length
-                    else:
-                        self.num_mm_tokens_in_chunk += length
-
-        if len(self.special_token_offsets) > 0:
-            mm_tokens_end_pos = (self.num_cached_mm_tokens +
-                                 self.num_mm_tokens_in_chunk)
-            self.num_cached_special_tokens = sum(
-                1 for offset in self.special_token_offsets
-                if offset < self.num_cached_mm_tokens)
-            self.num_special_tokens_in_chunk = sum(
-                1 for offset in self.special_token_offsets
-                if self.num_cached_mm_tokens <= offset < mm_tokens_end_pos)
-
-            self.total_special_tokens_in_request = len(
-                self.special_token_offsets)
-
-        if (self.num_cached_mm_tokens + self.num_mm_tokens_in_chunk + remainder
-                > self.total_mm_tokens_in_request):
-            raise ValueError(
-                f"num_cached_mm_tokens ({self.num_cached_mm_tokens}) + "
-                f"num_mm_tokens_in_chunk ({self.num_mm_tokens_in_chunk}) + "
-                f"remainder ({remainder}) must be <= total "
-                f"({self.total_mm_tokens_in_request})")
+        cs = self.embed_mask_cumsum
+        self.num_cached_mm_tokens = (int(cs[self.past_seen_token_num - 1])
+                                     if self.past_seen_token_num > 0 else 0)
+        self.num_mm_tokens_in_chunk = (int(cs[self.chunk_end_pos - 1]) -
+                                       self.num_cached_mm_tokens
+                                       if self.chunk_end_pos > 0 else 0)
+        self.total_embeds_in_request = int(cs[-1])
 
 
 @dataclass
@@ -981,31 +895,30 @@ def _has_mm_payload_keys(py_multimodal_data: Optional[dict]) -> bool:
     return bool(set(py_multimodal_data.keys()) - _MM_METADATA_ONLY_KEYS)
 
 
-def require_mm_spans_if_needed(
+def require_mm_embed_mask_if_needed(
     py_multimodal_data: Optional[dict],
     *,
     begin_compute: int,
     end_compute: int,
     prompt_len: int,
 ) -> None:
-    """Raise iff this iteration is partial AND MM data is present without spans.
+    """Raise iff this iteration is partial AND MM data is present without embed mask.
 
     A partial iteration is one where either:
       * ``begin_compute > 0`` — a prefix was reused from KV cache, OR
       * ``end_compute < prompt_len`` — the scheduler chose to chunk.
 
-    Partial iterations require ``mm_contiguous_spans`` to compute
-    ``num_cached_mm_tokens`` and ``num_mm_tokens_in_chunk`` correctly in
-    ``MultimodalRuntimeData``. Full-prefill, no-reuse iterations do not:
-    ``MultimodalRuntimeData`` stays ``None`` and ``find_input_mm_embeds``
-    handles the full payload via mask-based position lookup.
+    Partial iterations require ``multimodal_embed_mask`` to derive per-chunk
+    embed counts in ``MultimodalRuntimeData``. Full-prefill, no-reuse
+    iterations don't: ``MultimodalRuntimeData`` stays ``None`` and
+    ``find_input_mm_embeds`` handles the full payload.
 
-    When spans are missing on a non-partial iteration, log a one-shot warning
-    via ``logger.warning_once`` and proceed.
+    When the mask is missing on a non-partial iteration, log a one-shot
+    warning via ``logger.warning_once`` and proceed.
     """
     if not _has_mm_payload_keys(py_multimodal_data):
         return
-    if py_multimodal_data.get("mm_contiguous_spans") is not None:
+    if py_multimodal_data.get("multimodal_embed_mask") is not None:
         return
 
     is_partial = (begin_compute > 0) or (end_compute < prompt_len)
@@ -1013,20 +926,20 @@ def require_mm_spans_if_needed(
 
     if is_partial:
         raise ValueError(
-            f"Request requires mm_contiguous_spans for partial iteration "
+            f"Request requires multimodal_embed_mask for partial iteration "
             f"(begin_compute={begin_compute}, end_compute={end_compute}, "
             f"prompt_len={prompt_len}) but py_multimodal_data has keys "
-            f"{mm_keys} with no spans. The input processor may be missing a "
+            f"{mm_keys} with no mask. The input processor may be missing a "
             f"discriminator (override get_mm_token_ids or ensure get_vocab_size "
             f"resolves).")
 
     logger.warning_once(
-        "mm_contiguous_spans missing on multimodal request (keys=%s); "
-        "running without span-aware accounting. This is fine for full-prefill "
+        "multimodal_embed_mask missing on multimodal request (keys=%s); "
+        "running without mask-aware accounting. This is fine for full-prefill "
         "iterations but will fail if this request is later chunked or reuses "
         "KV cache.",
         mm_keys,
-        key="mm_spans_missing_non_partial",
+        key="mm_embed_mask_missing_non_partial",
     )
 
 

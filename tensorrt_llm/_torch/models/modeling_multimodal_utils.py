@@ -84,8 +84,7 @@ def _cache_multimodal_embeddings(
     for param in multimodal_params:
         if param.multimodal_runtime is not None:
             embed_lengths.append(
-                param.multimodal_runtime.total_mm_tokens_in_request -
-                param.multimodal_runtime.total_special_tokens_in_request)
+                param.multimodal_runtime.total_embeds_in_request)
 
     # Validate total length matches
     total_expected = sum(embed_lengths)
@@ -183,7 +182,7 @@ def get_multimodal_embeddings(
         if (not hasattr(uncached_multimodal_params[0], 'multimodal_runtime')
                 or uncached_multimodal_params[0].multimodal_runtime is None
                 or uncached_multimodal_params[0].multimodal_runtime.
-                total_mm_tokens_in_request is None):
+                total_embeds_in_request is None):
             logger.warning(
                 "Multimodal runtime data missing or incomplete, will not cache embeddings."
             )
@@ -251,15 +250,13 @@ def find_input_mm_embeds(
         # No slicing, return the full mm_embeds
         return mm_embeds
 
-    # Calculate total tokens that need processing (both cached and current chunk)
-    total_mm_tokens = sum([
-        param.multimodal_runtime.num_mm_tokens_in_chunk -
-        param.multimodal_runtime.num_special_tokens_in_chunk
-        for param in multimodal_params if param.multimodal_runtime is not None
-    ])
+    # Total embeds in the current chunk, across all requests.
+    total_mm_tokens = sum(param.multimodal_runtime.num_mm_tokens_in_chunk
+                          for param in multimodal_params
+                          if param.multimodal_runtime is not None)
 
     if total_mm_tokens == 0:
-        # No tokens need processing, return empty list
+        # Nothing in current chunk — skip vision encoder forward.
         logger.debug(
             "All multimodal tokens are cached or beyond current chunk, skipping vision encoder forward"
         )
@@ -274,26 +271,17 @@ def find_input_mm_embeds(
         runtime = param.multimodal_runtime
         if runtime is None:
             continue
-        local_start_pos = runtime.num_cached_mm_tokens - runtime.num_cached_special_tokens
-        local_end_pos = local_start_pos + runtime.num_mm_tokens_in_chunk - runtime.num_special_tokens_in_chunk
+        local_start_pos = runtime.num_cached_mm_tokens
+        local_end_pos = local_start_pos + runtime.num_mm_tokens_in_chunk
         slices.append(
             (current_pos + local_start_pos, current_pos + local_end_pos))
-        if len(mm_embeds
-               ) == 1:  # pre-concatenated mm_embeds, need global offset
-            current_pos += runtime.total_mm_tokens_in_request
-            current_pos -= runtime.total_special_tokens_in_request
-
-    sliced_mm_embeds = []
-    if len(mm_embeds) == 1:
-        sliced_mm_embeds = [mm_embeds[0][start:end] for start, end in slices]
-    else:  # slice each mm_embeds individually
-        for i, (start, end) in enumerate(slices):
-            sliced_mm_embeds.append(mm_embeds[i][start:end])
+        if len(mm_embeds) == 1:  # pre-concatenated; advance global cursor
+            current_pos += runtime.total_embeds_in_request
 
     if len(mm_embeds) == 1:
-        sliced_mm_embeds = [torch.cat(sliced_mm_embeds, dim=0)]
-
-    return sliced_mm_embeds
+        sliced = [mm_embeds[0][start:end] for start, end in slices]
+        return [torch.cat(sliced, dim=0)]
+    return [mm_embeds[i][start:end] for i, (start, end) in enumerate(slices)]
 
 
 def filter_mm_token_from_input_ids(

@@ -274,11 +274,11 @@ def test_runtime_data_cumsum_math_negative_past_seen_rejected():
         MultimodalRuntimeData(past_seen_token_num=-1, chunk_end_pos=5, embed_mask_cumsum=cumsum)
 
 
-def test_runtime_data_requires_either_cumsum_or_spans():
-    """Guard: must supply EITHER cumsum OR legacy spans."""
+def test_runtime_data_requires_cumsum():
+    """Guard: embed_mask_cumsum is required."""
     from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData
 
-    with pytest.raises(ValueError, match="requires either embed_mask_cumsum or"):
+    with pytest.raises(TypeError):
         MultimodalRuntimeData(past_seen_token_num=0, chunk_end_pos=5)
 
 

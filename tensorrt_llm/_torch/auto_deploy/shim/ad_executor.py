@@ -37,7 +37,7 @@ from tensorrt_llm._torch.pyexecutor.seq_slot_manager import SeqSlotManager
 from tensorrt_llm._torch.speculative import get_spec_drafter
 from tensorrt_llm._torch.speculative.eagle3 import Eagle3OneModelSampler, Eagle3ResourceManager
 from tensorrt_llm._utils import nvtx_range
-from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData, require_mm_spans_if_needed
+from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData, require_mm_embed_mask_if_needed
 from tensorrt_llm.llmapi.llm_args import (
     ContextChunkingPolicy,
     EagleDecodingConfig,
@@ -691,41 +691,43 @@ class ADEngine(ModelEngine):
                 count_list.append(0)
                 continue
 
-            mm_spans = (
-                req.py_multimodal_data.get("mm_contiguous_spans")
-                if req.py_multimodal_data
-                else None
-            )
             all_prompt_tokens = req.get_tokens(0)
-            require_mm_spans_if_needed(
+            require_mm_embed_mask_if_needed(
                 req.py_multimodal_data,
                 begin_compute=begin_compute,
                 end_compute=end_compute,
                 prompt_len=len(all_prompt_tokens),
             )
-            if mm_spans is None:
-                # Non-partial request without spans — skip MultimodalRuntimeData
-                # construction; flat_start / count will be 0 for this request.
+            if per_unit_masks is None:
+                # No MM payload on this request (or none requiring embed
+                # staging); flat_start / count stay 0 so concatenated cursors
+                # don't advance.
                 flat_start_list.append(0)
                 count_list.append(0)
                 continue
 
+            # mm_chunk_embed_mask_flat for this request was already stitched
+            # above. Reuse that stitched bool mask for the cumsum derivation.
+            flat_mask = torch.zeros(len(all_prompt_tokens), dtype=torch.bool)
+            for j, per_unit in enumerate(per_unit_masks):
+                unit_pos = int(mm_pos_list[j])
+                unit_len = int(mm_len_list[j])
+                if per_unit is None:
+                    flat_mask[unit_pos : unit_pos + unit_len] = True
+                else:
+                    flat_mask[unit_pos : unit_pos + unit_len] = (
+                        per_unit.to(torch.bool)
+                        if hasattr(per_unit, "to")
+                        else torch.as_tensor(per_unit, dtype=torch.bool)
+                    )
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,
-                mm_contiguous_spans=mm_spans,
                 chunk_end_pos=end_compute,
-                special_token_offsets=list(special_offsets),
+                embed_mask_cumsum=flat_mask.to(torch.int64).cumsum(0),
             )
-            num_cached = runtime.num_cached_mm_tokens
-            num_in_chunk = runtime.num_mm_tokens_in_chunk
-            num_cached_special = runtime.num_cached_special_tokens
-            num_special_in_chunk = runtime.num_special_tokens_in_chunk
-            total_mm_i = runtime.total_mm_tokens_in_request
-            total_special_i = runtime.total_special_tokens_in_request
-            flat_start_i = cumsum_total_mm + num_cached - num_cached_special
-            flat_start_list.append(flat_start_i)
-            count_list.append(num_in_chunk - num_special_in_chunk)
-            cumsum_total_mm += total_mm_i - total_special_i
+            flat_start_list.append(cumsum_total_mm + runtime.num_cached_mm_tokens)
+            count_list.append(runtime.num_mm_tokens_in_chunk)
+            cumsum_total_mm += runtime.total_embeds_in_request
 
         extra_args["mm_item_cu_seqlen"] = [
             torch.tensor(mm_item_cu_seqlen, dtype=torch.int32, device="cpu")
