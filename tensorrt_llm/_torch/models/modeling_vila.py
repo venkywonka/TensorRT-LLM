@@ -1220,7 +1220,7 @@ class VilaModel(PreTrainedModel):
             self.llm.model.embed_tokens,
             input_ids,
             mm_embeds,
-            multimodal_params=multimodal_params if multimodal_params else None,
+            multimodal_params=multimodal_params,
             **kwargs)
         logits = self.llm.forward(attn_metadata=attn_metadata,
                                   input_ids=input_ids,

@@ -994,8 +994,7 @@ class Qwen2VLModelBase(PreTrainedModel):
             self.llm.model.embed_tokens,
             input_ids,
             mm_embeds,
-            multimodal_params=mm_multimodal_params
-            if len(mm_multimodal_params) > 0 else None,
+            multimodal_params=mm_multimodal_params,
             **kwargs)
         output_prob = self.llm.forward(
             attn_metadata=attn_metadata,

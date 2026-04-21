@@ -1129,7 +1129,7 @@ class Qwen3VLModelBase(PreTrainedModel):
             input_ids,
             mm_embeds,
             extra_embeds=deepstack_embeds,
-            multimodal_params=mm_multimodal_params if len(mm_multimodal_params) > 0 else None,
+            multimodal_params=mm_multimodal_params,
             **kwargs,
         )
         if len(deepstack_embeds) > 0:

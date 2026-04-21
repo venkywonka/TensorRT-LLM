@@ -1452,7 +1452,7 @@ class Llama4ForConditionalGeneration(SpecDecOneEngineForCausalLM[Llama4Model,
             self.model.embed_tokens,
             input_ids,
             mm_embeds,
-            multimodal_params=multimodal_params if multimodal_params else None,
+            multimodal_params=multimodal_params,
             **kwargs)
         return super().forward(attn_metadata,
                                input_ids,
