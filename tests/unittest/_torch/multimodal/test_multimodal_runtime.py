@@ -11,7 +11,7 @@ from tensorrt_llm.inputs.multimodal import (MultimodalParams,
                                             MultimodalRuntimeData,
                                             find_contiguous_mm_spans,
                                             find_mm_token_positions)
-from tensorrt_llm.inputs.registry import compute_mm_contiguous_spans_if_absent
+from tensorrt_llm.inputs.registry import compute_mm_embed_mask_if_absent
 
 # Embedding dim kept small — functions under test only index along dim 0.
 _EMBED_DIM = 4
@@ -740,7 +740,7 @@ class TestFindMmTokenPositions:
 
 
 class _MockProcessor:
-    """Minimal mock of BaseMultimodalInputProcessor for compute_mm_contiguous_spans_if_absent tests."""
+    """Minimal mock of BaseMultimodalInputProcessor for compute_mm_embed_mask_if_absent tests."""
 
     def __init__(self,
                  vocab_size=100,
@@ -760,60 +760,68 @@ class _MockProcessor:
         return self._mm_special_token_ids
 
 
-class TestEnsureMmContiguousSpans:
-    """Test cases for compute_mm_contiguous_spans_if_absent — the idempotent post-processing helper."""
+class TestComputeMmEmbedMaskIfAbsent:
+    """Test cases for compute_mm_embed_mask_if_absent — the idempotent post-processing helper."""
 
     def test_none_extra_is_noop(self):
         """No crash when extra_processed_inputs is None."""
-        compute_mm_contiguous_spans_if_absent([1, 2, 3], None, _MockProcessor())
+        compute_mm_embed_mask_if_absent([1, 2, 3], None, _MockProcessor())
 
     def test_no_multimodal_data_key_is_noop(self):
         """No crash when multimodal_data key is absent."""
         extra = {"some_other_key": {}}
-        compute_mm_contiguous_spans_if_absent([1, 2, 3], extra,
-                                              _MockProcessor())
-        assert "mm_contiguous_spans" not in extra
+        compute_mm_embed_mask_if_absent([1, 2, 3], extra, _MockProcessor())
+        assert "multimodal_embed_mask" not in extra
 
     def test_already_present_is_idempotent(self):
-        """Existing spans are NOT overwritten."""
-        original_spans = [(0, 5)]
-        extra = {"multimodal_data": {"mm_contiguous_spans": original_spans}}
-        compute_mm_contiguous_spans_if_absent([100, 101, 102, 103, 104], extra,
-                                              _MockProcessor(vocab_size=100))
-        assert extra["multimodal_data"]["mm_contiguous_spans"] is original_spans
+        """Existing mask is NOT overwritten."""
+        original_mask = [torch.tensor([True, True, True, True, True])]
+        extra = {"multimodal_data": {"multimodal_embed_mask": original_mask}}
+        compute_mm_embed_mask_if_absent([100, 101, 102, 103, 104], extra,
+                                        _MockProcessor(vocab_size=100))
+        assert (extra["multimodal_data"]["multimodal_embed_mask"]
+                is original_mask)
 
-    def test_computes_spans_when_absent(self):
-        """Spans computed from token IDs when not already present."""
+    def test_computes_mask_when_absent(self):
+        """Per-unit mask computed from token IDs when not already present."""
         extra = {"multimodal_data": {"multimodal_embedding": "placeholder"}}
-        compute_mm_contiguous_spans_if_absent([1, 100, 101, 2, 102], extra,
-                                              _MockProcessor(vocab_size=100))
-        assert extra["multimodal_data"]["mm_contiguous_spans"] == [(1, 2),
-                                                                   (4, 1)]
+        # input: [1, 100, 101, 2, 102] → mm runs at positions [1..3) and [4..5),
+        # vocab_size=100 → ids >= 100 are mm. Two spans of lengths 2 and 1,
+        # all-embed (no specials) -> [T,T] and [T].
+        compute_mm_embed_mask_if_absent([1, 100, 101, 2, 102], extra,
+                                        _MockProcessor(vocab_size=100))
+        masks = extra["multimodal_data"]["multimodal_embed_mask"]
+        assert len(masks) == 2
+        assert torch.equal(masks[0], torch.tensor([True, True]))
+        assert torch.equal(masks[1], torch.tensor([True]))
 
     def test_no_mm_tokens_stores_empty(self):
         """When no MM tokens found, stores empty list (not None)."""
         extra = {"multimodal_data": {"some_key": "value"}}
-        compute_mm_contiguous_spans_if_absent([1, 2, 3], extra,
-                                              _MockProcessor(vocab_size=100))
-        assert extra["multimodal_data"]["mm_contiguous_spans"] == []
+        compute_mm_embed_mask_if_absent([1, 2, 3], extra,
+                                        _MockProcessor(vocab_size=100))
+        assert extra["multimodal_data"]["multimodal_embed_mask"] == []
 
-    def test_stores_special_token_offsets(self):
-        """Special token offsets stored when mm_special_token_ids provided."""
+    def test_mask_excludes_special_tokens(self):
+        """Specials inside a span show up as False in the per-unit mask."""
         proc = _MockProcessor(vocab_size=None,
-                              mm_token_ids=torch.tensor([50]),
+                              mm_token_ids=torch.tensor([50, 60]),
                               mm_special_token_ids=torch.tensor([60]))
         extra = {"multimodal_data": {"embed": "x"}}
-        # input: [1, 50, 60, 50, 2] → mm positions [1,2,3], special at index 1
-        compute_mm_contiguous_spans_if_absent([1, 50, 60, 50, 2], extra, proc)
-        assert extra["multimodal_data"]["special_token_offsets"] == [1]
+        # input: [1, 50, 60, 50, 2] → mm run [1..4), special at absolute pos 2.
+        # Per-unit mask (length 3) = [True, False, True].
+        compute_mm_embed_mask_if_absent([1, 50, 60, 50, 2], extra, proc)
+        masks = extra["multimodal_data"]["multimodal_embed_mask"]
+        assert len(masks) == 1
+        assert torch.equal(masks[0], torch.tensor([True, False, True]))
 
     def test_no_vocab_and_no_mm_ids_is_noop(self):
         """When processor provides neither vocab_size nor mm_token_ids, no crash."""
         proc = _MockProcessor(vocab_size=None, mm_token_ids=None)
         extra = {"multimodal_data": {"embed": "x"}}
-        compute_mm_contiguous_spans_if_absent([100, 101], extra, proc)
-        # Should not have set spans since we can't identify MM tokens
-        assert "mm_contiguous_spans" not in extra["multimodal_data"]
+        compute_mm_embed_mask_if_absent([100, 101], extra, proc)
+        # Should not have set the mask since we can't identify MM tokens
+        assert "multimodal_embed_mask" not in extra["multimodal_data"]
 
 
 class TestFindContiguousMmSpans:

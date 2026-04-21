@@ -82,7 +82,6 @@ from .interface import CachedSequenceInterface, GetInferenceModel
 _RESERVED_MM_DATA_KEYS = frozenset(
     {
         "layout_metadata",
-        "mm_contiguous_spans",
         "special_token_offsets",
         # Consumed by _store_prefill_multimodal_metadata to build
         # mm_chunk_embed_mask; must NOT leak into the generic extra_args dict

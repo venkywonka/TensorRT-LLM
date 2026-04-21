@@ -873,10 +873,10 @@ def find_mm_token_lengths(
 # Keys in py_multimodal_data that carry metadata (not vision/audio content).
 # If py_multimodal_data has ONLY these keys, the request has no real MM
 # payload (e.g. mrope-only warmup on an mrope-enabled model) and the
-# require_mm_spans_if_needed gate short-circuits.
+# require_mm_embed_mask_if_needed gate short-circuits.
 _MM_METADATA_ONLY_KEYS = frozenset({
     "mrope_config",
-    "mm_contiguous_spans",
+    "multimodal_embed_mask",
     "special_token_offsets",
     "layout_metadata",
 })
@@ -886,7 +886,7 @@ def _has_mm_payload_keys(py_multimodal_data: Optional[dict]) -> bool:
     """True iff py_multimodal_data contains vision/video/audio content keys.
 
     Metadata-only payloads (``mrope_config`` on mrope warmup,
-    ``mm_contiguous_spans`` alone, ``special_token_offsets`` alone,
+    ``multimodal_embed_mask`` alone, ``special_token_offsets`` alone,
     ``layout_metadata``) return False — those don't carry real MM content
     that the model needs to fuse embeddings for.
     """

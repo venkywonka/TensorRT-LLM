@@ -158,7 +158,7 @@ def test_compute_mm_embed_mask_if_absent_populates_py_multimodal_data():
 
     Key used: 'multimodal_embed_mask'. Covers Task 1.8 plumbing.
     """
-    from tensorrt_llm.inputs.registry import compute_mm_contiguous_spans_if_absent
+    from tensorrt_llm.inputs.registry import compute_mm_embed_mask_if_absent
 
     class FakeProcessor:
         def get_vocab_size(self):
@@ -172,7 +172,7 @@ def test_compute_mm_embed_mask_if_absent_populates_py_multimodal_data():
 
     prompt_token_ids = [10, 1001, 1002, 2000, 1003, 1004, 1005, 20]
     extra = {"multimodal_data": {}}
-    compute_mm_contiguous_spans_if_absent(prompt_token_ids, extra, FakeProcessor())
+    compute_mm_embed_mask_if_absent(prompt_token_ids, extra, FakeProcessor())
 
     mm_data = extra["multimodal_data"]
     assert "multimodal_embed_mask" in mm_data

@@ -765,63 +765,56 @@ def _get_single_mm_token_lengths(
     return num_mm_tokens
 
 
-def compute_mm_contiguous_spans_if_absent(
+def compute_mm_embed_mask_if_absent(
     prompt_token_ids: List[int],
     extra_processed_inputs: Optional[ExtraProcessedInputs],
     input_processor: BaseMultimodalInputProcessor,
 ) -> None:
-    """Ensure mm_contiguous_spans is present in extra_processed_inputs.
+    """Ensure ``multimodal_embed_mask`` is present in ``extra_processed_inputs``.
 
-    Idempotent: if the field already exists, this is a no-op.  Otherwise,
-    scans ``prompt_token_ids`` for contiguous runs of multimodal tokens
-    using vocabulary / token-ID metadata from ``input_processor`` and stores
-    the result in ``extra_processed_inputs["multimodal_data"]``.
+    Idempotent: no-op when the mask is already populated. Otherwise scans
+    ``prompt_token_ids`` with the vocab / mm-token-id predicate from
+    ``input_processor`` to produce per-logical-unit bool masks and stores
+    them at ``extra_processed_inputs["multimodal_data"]["multimodal_embed_mask"]``.
 
     Safe to call after any input-processing path — if the processor cannot
     provide vocabulary or MM token information, the call is silently skipped.
+
+    Qwen3.5-VL-MoE intake still writes ``special_token_offsets`` via
+    ``layout_metadata`` (the AD executor reads it as a fallback when the
+    mask is absent); this helper leaves that nested dict alone.
     """
     if extra_processed_inputs is None:
         return
     mm_data = extra_processed_inputs.get("multimodal_data")
     if mm_data is None:
         return
-    # Fast exit if BOTH outputs are already present — other upstream paths
-    # (e.g., the hashing-aware intake) may write one without the other, so we
-    # can't bail on just spans.
-    if ("mm_contiguous_spans" in mm_data
-            and "multimodal_embed_mask" in mm_data):
+    if "multimodal_embed_mask" in mm_data:
         return
 
     vocab_size = input_processor.get_vocab_size()
     mm_token_ids = input_processor.get_mm_token_ids()
     if vocab_size is None and mm_token_ids is None:
         logger.debug(
-            "compute_mm_contiguous_spans_if_absent: processor provides neither "
-            "vocab_size nor mm_token_ids — skipping span/mask computation.")
+            "compute_mm_embed_mask_if_absent: processor provides neither "
+            "vocab_size nor mm_token_ids — skipping mask computation.")
         return
 
     mm_special_token_ids = input_processor.get_mm_special_token_ids()
-    contiguous_spans, special_token_offsets = find_contiguous_mm_spans(
+    contiguous_spans, _ = find_contiguous_mm_spans(
         input_ids=prompt_token_ids,
         vocab_size=vocab_size,
         mm_token_ids=mm_token_ids,
         mm_special_token_ids=mm_special_token_ids,
     )
-    if "mm_contiguous_spans" not in mm_data:
-        mm_data["mm_contiguous_spans"] = contiguous_spans
-    else:
-        contiguous_spans = mm_data["mm_contiguous_spans"]
-    if special_token_offsets and "special_token_offsets" not in mm_data:
-        mm_data["special_token_offsets"] = special_token_offsets
-    if "multimodal_embed_mask" not in mm_data:
-        from tensorrt_llm.inputs.multimodal import compute_per_unit_embed_masks
-        mm_data["multimodal_embed_mask"] = compute_per_unit_embed_masks(
-            input_ids=prompt_token_ids,
-            contiguous_spans=contiguous_spans,
-            vocab_size=vocab_size,
-            mm_token_ids=mm_token_ids,
-            mm_special_token_ids=mm_special_token_ids,
-        )
+    from tensorrt_llm.inputs.multimodal import compute_per_unit_embed_masks
+    mm_data["multimodal_embed_mask"] = compute_per_unit_embed_masks(
+        input_ids=prompt_token_ids,
+        contiguous_spans=contiguous_spans,
+        vocab_size=vocab_size,
+        mm_token_ids=mm_token_ids,
+        mm_special_token_ids=mm_special_token_ids,
+    )
 
 
 def create_input_processor_with_hash(
@@ -978,9 +971,6 @@ def create_input_processor_with_hash(
         extra_processed_inputs[
             "multimodal_input"] = MultimodalInput.from_components(
                 mm_hashes_int32, start_positions, num_mm_tokens, mm_uuid_list)
-        # Store spans in multimodal_data for use by MultimodalRuntimeData
-        extra_processed_inputs["multimodal_data"][
-            "mm_contiguous_spans"] = contiguous_spans
         return prompt_token_ids, extra_processed_inputs
 
     def input_processor_wrapper(
@@ -1022,12 +1012,12 @@ def create_input_processor_with_hash(
                 if try_multimodal_hashing:
                     # if trying for first time, set the flag to True
                     input_processor.multimodal_hashing_supported = True
-                # Hashing writes mm_contiguous_spans but not multimodal_embed_mask.
-                # Populate the mask here so partial-iteration consumers (chunked
-                # prefill, KV-cache reuse) have what they need.
-                compute_mm_contiguous_spans_if_absent(prompt_token_ids,
-                                                      extra_processed_inputs,
-                                                      input_processor)
+                # Hashing emits MultimodalInput but not the embed mask; populate
+                # it here so partial-iteration consumers (chunked prefill,
+                # KV-cache reuse) have what they need.
+                compute_mm_embed_mask_if_absent(prompt_token_ids,
+                                                extra_processed_inputs,
+                                                input_processor)
                 return prompt_token_ids, extra_processed_inputs
             except Exception as e:
                 logger.warning(f"Multimodal hashing failed: {e}.")
@@ -1039,9 +1029,9 @@ def create_input_processor_with_hash(
                     try:
                         prompt_token_ids, extra_processed_inputs = input_processor(
                             inputs, sampling_params)
-                        compute_mm_contiguous_spans_if_absent(
-                            prompt_token_ids, extra_processed_inputs,
-                            input_processor)
+                        compute_mm_embed_mask_if_absent(prompt_token_ids,
+                                                        extra_processed_inputs,
+                                                        input_processor)
                         return prompt_token_ids, extra_processed_inputs
                     except Exception as e2:
                         logger.warning(f"Basic input processor failed: {e}.")
@@ -1053,9 +1043,9 @@ def create_input_processor_with_hash(
             try:
                 prompt_token_ids, extra_processed_inputs = input_processor(
                     inputs, sampling_params)
-                compute_mm_contiguous_spans_if_absent(prompt_token_ids,
-                                                      extra_processed_inputs,
-                                                      input_processor)
+                compute_mm_embed_mask_if_absent(prompt_token_ids,
+                                                extra_processed_inputs,
+                                                input_processor)
                 return prompt_token_ids, extra_processed_inputs
             except Exception as e:
                 logger.warning(f"Basic input processor failed: {e}.")

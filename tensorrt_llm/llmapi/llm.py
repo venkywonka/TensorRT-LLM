@@ -35,7 +35,7 @@ from ..executor.postproc_worker import PostprocParams
 from ..executor.request import DEFAULT_REQUEST_PRIORITY
 from ..executor.utils import (RequestError, create_mpi_comm_session,
                               get_spawn_proxy_process_env)
-from ..inputs import (PromptInputs, compute_mm_contiguous_spans_if_absent,
+from ..inputs import (PromptInputs, compute_mm_embed_mask_if_absent,
                       create_input_processor, create_input_processor_with_hash,
                       get_cache_salt_id, prompt_inputs)
 from ..logger import logger
@@ -591,9 +591,9 @@ class BaseLLM:
                     mrope_config[
                         "mrope_position_deltas"] = disaggregated_params.mrope_position_deltas_handle
                     multimodal_data["mrope_config"] = mrope_config
-                # Backfill mm_contiguous_spans so downstream chunked-prefill
+                # Backfill multimodal_embed_mask so downstream chunked-prefill
                 # logic can slice the pre-computed embeddings correctly.
-                compute_mm_contiguous_spans_if_absent(
+                compute_mm_embed_mask_if_absent(
                     prompt_token_ids, {"multimodal_data": multimodal_data},
                     cast(BaseMultimodalInputProcessor, self.input_processor))
                 multimodal_params = MultimodalParams(
@@ -646,7 +646,7 @@ class BaseLLM:
                     BaseMultimodalInputProcessor,
                     self.input_processor).attach_multimodal_embeddings(
                         inputs, mm_embedding_info, sampling_params)
-                compute_mm_contiguous_spans_if_absent(
+                compute_mm_embed_mask_if_absent(
                     prompt_token_ids, extra_processed_inputs,
                     cast(BaseMultimodalInputProcessor, self.input_processor))
             else:
