@@ -3,6 +3,7 @@
 """Multimodal utilities for handling images and other media types in TensorRT-LLM."""
 
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -53,6 +54,13 @@ class MultimodalInput:
     If the UUID string is longer than 32 bytes, it will be hashed internally
     for cache key computation, but the original UUID string is preserved and
     returned in KV cache events.
+    """
+
+    multimodal_is_embeds: Optional[List[Optional[torch.Tensor]]] = None
+    """Per-logical-unit bool mask over outer-box positions. None iff not yet
+    materialized; each entry None iff unit has no inline specials. Python-only —
+    NOT forwarded to the C++ tle::MultimodalInput.  See
+    slop/mm_is_embed_migration/goals.md §3.1.
     """
 
     def __post_init__(self):
@@ -120,6 +128,97 @@ class MultimodalInput:
             torch.tensor(self.multimodal_hashes, dtype=torch.int32),
             torch.tensor(self.multimodal_positions, dtype=torch.int32),
             torch.tensor(self.multimodal_lengths, dtype=torch.int32))
+
+    def materialize_is_embed(
+        self,
+        prompt_token_ids: torch.Tensor,
+        vocab_size: int,
+        mm_token_ids: Optional[torch.Tensor] = None,
+        mm_special_token_ids: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Idempotent materialization of is_embed_flat.
+
+        Source order (see slop/mm_is_embed_migration/goals.md §4.2-§4.3):
+          1. self.multimodal_is_embeds if populated -> stitch into flat.
+          2. mm_token_ids if available -> isin(prompt, mm_token_ids), then
+             subtract specials when declared.
+          3. vocab_size fallback -> prompt >= vocab_size, then subtract specials.
+
+        Paths 2 and 3 preserve the legacy `filter_mm_token_from_input_ids`
+        predicate byte-for-byte — the zero-regression guarantee.
+        """
+        # Second call is a no-op (backstop may fire after intake already ran).
+        if "_is_embed_flat" in self.__dict__:
+            return self.__dict__["_is_embed_flat"]
+
+        if not isinstance(prompt_token_ids, torch.Tensor):
+            prompt_token_ids = torch.as_tensor(prompt_token_ids)
+
+        # Path 1: stitch from per-unit masks if the processor populated them.
+        if self.multimodal_is_embeds is not None:
+            mask = torch.zeros(prompt_token_ids.shape[0],
+                               dtype=torch.bool,
+                               device=prompt_token_ids.device)
+            for i, per_unit in enumerate(self.multimodal_is_embeds):
+                pos = self.multimodal_positions[i]
+                length = self.multimodal_lengths[i]
+                if per_unit is None:
+                    mask[pos:pos + length] = True
+                else:
+                    per_unit = per_unit.to(device=prompt_token_ids.device,
+                                           dtype=torch.bool)
+                    mask[pos:pos + length] = per_unit
+            self.__dict__["_is_embed_flat"] = mask
+            return mask
+
+        # Path 2/3: predicate over prompt_token_ids.
+        if mm_token_ids is not None:
+            mm_token_ids = mm_token_ids.to(device=prompt_token_ids.device,
+                                           dtype=prompt_token_ids.dtype)
+            mask = torch.isin(prompt_token_ids, mm_token_ids)
+        else:
+            mask = prompt_token_ids >= vocab_size
+
+        if mm_special_token_ids is not None:
+            mm_special_token_ids = mm_special_token_ids.to(
+                device=prompt_token_ids.device, dtype=prompt_token_ids.dtype)
+            mask = mask & ~torch.isin(prompt_token_ids, mm_special_token_ids)
+
+        self.__dict__["_is_embed_flat"] = mask
+        return mask
+
+    @cached_property
+    def is_embed_flat(self) -> Optional[torch.Tensor]:
+        """Return the cached bool[request_seq_len] mask, or None if not materialized.
+
+        Note: materialize_is_embed writes into self.__dict__["_is_embed_flat"]
+        directly, so this property reads the cache when available; when it
+        hasn't been called, returns None without attempting lazy stitching
+        (caller must pass prompt_token_ids + vocab via materialize_is_embed).
+        """
+        return self.__dict__.get("_is_embed_flat")
+
+    @cached_property
+    def is_embed_cumsum(self) -> Optional[torch.Tensor]:
+        """Return int64 prefix sum of is_embed_flat, or None when mask is absent.
+
+        Enables O(1) range queries via get_chunk_embed_indices.
+        """
+        if self.is_embed_flat is None:
+            return None
+        return self.is_embed_flat.to(dtype=torch.int64).cumsum(0)
+
+    def get_chunk_embed_indices(self, chunk_start: int,
+                                chunk_end: int) -> Tuple[int, int]:
+        """Translate [chunk_start, chunk_end) to [enc_lo, enc_hi) via cumsum.
+
+        Input positions are in the full prompt; output positions are row
+        indices into the encoder output tensor. See goals.md §5.2.
+        """
+        cs = self.is_embed_cumsum
+        enc_lo = int(cs[chunk_start - 1]) if chunk_start > 0 else 0
+        enc_hi = int(cs[chunk_end - 1]) if chunk_end > 0 else 0
+        return enc_lo, enc_hi
 
 
 @dataclass
@@ -986,6 +1085,42 @@ def find_contiguous_mm_spans(
         zip(span_starts.tolist(), span_lengths.tolist(), strict=True))
 
     return contiguous_spans, special_token_offsets
+
+
+def compute_per_unit_is_embeds(
+    input_ids: Union[torch.Tensor, List[int], np.ndarray],
+    contiguous_spans: List[Tuple[int, int]],
+    vocab_size: Optional[int] = None,
+    mm_token_ids: Optional[torch.Tensor] = None,
+    mm_special_token_ids: Optional[torch.Tensor] = None,
+) -> List[torch.Tensor]:
+    """Return per-span bool[length] masks with True at embeds, False at specials.
+
+    Companion to ``find_contiguous_mm_spans`` — keeps the producer API back-compat
+    (still 2-tuple) while providing the per-unit mask needed for
+    MultimodalInput.multimodal_is_embeds. See slop/mm_is_embed_migration/goals.md §3.1.
+    """
+    if not isinstance(input_ids, torch.Tensor):
+        if isinstance(input_ids, list):
+            input_ids = torch.tensor(input_ids)
+        elif isinstance(input_ids, np.ndarray):
+            input_ids = torch.from_numpy(input_ids)
+
+    # Build the embed-only mask over the whole prompt, then slice per span.
+    if mm_token_ids is None:
+        embed_mask = input_ids >= vocab_size
+    else:
+        mm_token_ids = mm_token_ids.to(device=input_ids.device,
+                                       dtype=input_ids.dtype)
+        embed_mask = torch.isin(input_ids, mm_token_ids)
+    if mm_special_token_ids is not None:
+        mm_special_token_ids = mm_special_token_ids.to(device=input_ids.device,
+                                                       dtype=input_ids.dtype)
+        embed_mask = embed_mask & ~torch.isin(input_ids, mm_special_token_ids)
+    return [
+        embed_mask[start:start + length].clone()
+        for start, length in contiguous_spans
+    ]
 
 
 def find_mm_token_positions(
