@@ -634,9 +634,6 @@ class ADEngine(ModelEngine):
                     "layout_metadata", req.py_multimodal_data
                 )
             mm_item_types = layout_metadata.get("item_types", []) if layout_metadata else []
-            special_offsets = (
-                layout_metadata.get("special_token_offsets", []) if layout_metadata else []
-            )
             mm_pos_list = list(mm_pos) if mm_pos is not None else []
             mm_len_list = list(mm_len) if mm_len is not None else []
             mm_item_types_list = list(mm_item_types)
@@ -655,18 +652,41 @@ class ADEngine(ModelEngine):
             mm_item_types_flat.extend(mm_item_types_list)
             mm_token_positions_flat.extend(mm_pos_list)
             mm_token_lengths_flat.extend(mm_len_list)
-            mm_special_offsets_cu_seqlen.append(
-                mm_special_offsets_cu_seqlen[-1] + len(special_offsets)
-            )
-            mm_special_offsets_flat.extend(list(special_offsets))
 
-            # Stitch per-unit multimodal_embed_mask into a chunk-local bool
-            # slice. Positions outside any unit default to False (text).
+            # Single source of truth: per-unit embed masks. Derive the legacy
+            # mm_special_offsets_* tensors from the mask (False positions
+            # inside a unit are specials, indexed into the flat concat of all
+            # MM tokens for this request). Fall back to the upstream
+            # special_token_offsets emission only when the mask is absent
+            # (e.g., Qwen3.5-VL-MoE custom intake that doesn't dual-write).
+            # TODO: migrate the Qwen3.5-VL-MoE input processors
+            # (tensorrt_llm/_torch/auto_deploy/models/custom/modeling_qwen3_5_moe{,_ir}.py)
+            # to emit multimodal_embed_mask directly, then delete this fallback
+            # plus layout_metadata["special_token_offsets"] across the codebase.
             per_unit_masks = (
                 req.py_multimodal_data.get("multimodal_embed_mask")
                 if req.py_multimodal_data
                 else None
             )
+            if per_unit_masks is not None:
+                special_offsets: List[int] = []
+                mm_cursor = 0
+                for j, per_unit in enumerate(per_unit_masks):
+                    unit_len = int(mm_len_list[j])
+                    if per_unit is not None:
+                        pu = per_unit.tolist() if hasattr(per_unit, "tolist") else list(per_unit)
+                        for k in range(unit_len):
+                            if not bool(pu[k]):
+                                special_offsets.append(mm_cursor + k)
+                    mm_cursor += unit_len
+            else:
+                special_offsets = list(
+                    layout_metadata.get("special_token_offsets", []) if layout_metadata else []
+                )
+            mm_special_offsets_cu_seqlen.append(
+                mm_special_offsets_cu_seqlen[-1] + len(special_offsets)
+            )
+            mm_special_offsets_flat.extend(special_offsets)
             chunk_len = end_compute - begin_compute
             if per_unit_masks is not None and chunk_len > 0:
                 full_mask = [False] * len(req.get_tokens(0))

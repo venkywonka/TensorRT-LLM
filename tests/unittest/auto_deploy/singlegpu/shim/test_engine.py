@@ -461,6 +461,19 @@ def test_ad_engine_stages_mm_chunk_embed_mask_from_mask_field():
         named_args["mm_chunk_embed_mask_cu_seqlen"].cpu(),
         torch.tensor([0, 4], dtype=torch.int32),
     )
+    # Legacy mm_special_offsets_* tensors must be derived from the mask (not
+    # read from layout_metadata.special_token_offsets), so unmigrated
+    # consumers (modeling_qwen3_5_moe*.py) keep working without the upstream
+    # having to dual-write both fields. Unit mask [T,T,F,T] -> special at
+    # flat mm index 2.
+    torch.testing.assert_close(
+        named_args["mm_special_offsets"].cpu(),
+        torch.tensor([2], dtype=torch.int32),
+    )
+    torch.testing.assert_close(
+        named_args["mm_special_offsets_cu_seqlen"].cpu(),
+        torch.tensor([0, 1], dtype=torch.int32),
+    )
 
     cache_seq_interface.shutdown()
 
