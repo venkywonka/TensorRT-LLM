@@ -225,45 +225,73 @@ class MultimodalInput:
 class MultimodalRuntimeData:
     """Runtime data for tracking multimodal token caching and reuse per request sequence.
 
-    This class tracks which multimodal tokens are cached vs. need to be processed
-    for each request sequence during both KV cache reuse and chunked prefill scenarios.
+    Two construction modes:
+
+    - LEGACY (sparse): pass ``mm_contiguous_spans`` + ``special_token_offsets``;
+      counts derived via interval arithmetic. Path will be dropped in Commit 6.
+    - CUMSUM (mask-based): pass ``is_embed_cumsum`` (from
+      ``MultimodalInput.is_embed_cumsum``); counts derived via three O(1)
+      cumsum lookups. Preferred for non-contiguous MM with specials.
 
     Attributes:
         past_seen_token_num: Total tokens already processed in previous iterations (cached)
-        mm_contiguous_spans: List of (start_position, token_count) per contiguous MM token run
         chunk_end_pos: End position of the current chunk for chunked prefill
-        special_token_offsets: Indices of special tokens in the flat MM token union
+        mm_contiguous_spans: LEGACY — list of (start_position, token_count) per run
+        special_token_offsets: LEGACY — indices of specials in the flat MM token union
+        is_embed_cumsum: CUMSUM — int64 prefix sum of is_embed_flat from MultimodalInput
 
         num_cached_mm_tokens: Number of MM tokens that are cached (computed)
         num_mm_tokens_in_chunk: Number of MM tokens in the current chunk (computed)
-        total_mm_tokens_in_request: Total MM tokens in the request sequence (computed)
+        total_mm_tokens_in_request: Total MM tokens (legacy name; kept for back-compat)
+        total_embeds_in_request: Total embed slots (cumsum path; excludes specials)
 
-        num_cached_special_tokens: Number of special tokens that are cached (computed)
-        num_special_tokens_in_chunk: Number of special tokens in the current chunk (computed)
-        total_special_tokens_in_request: Total special tokens in the request (computed)
+        num_cached_special_tokens, num_special_tokens_in_chunk, total_special_tokens_in_request:
+            LEGACY — dropped in Commit 6
     """
     past_seen_token_num: int
-    mm_contiguous_spans: List[Tuple[int, int]]
     chunk_end_pos: int
-    special_token_offsets: List[int]
+
+    mm_contiguous_spans: Optional[List[Tuple[int, int]]] = None
+    special_token_offsets: Optional[List[int]] = None
+    is_embed_cumsum: Optional[torch.Tensor] = None
 
     num_cached_mm_tokens: Optional[int] = None
     num_mm_tokens_in_chunk: Optional[int] = None
     total_mm_tokens_in_request: Optional[int] = None
+    total_embeds_in_request: Optional[int] = None
 
     num_cached_special_tokens: Optional[int] = 0
     num_special_tokens_in_chunk: Optional[int] = 0
     total_special_tokens_in_request: Optional[int] = 0
 
     def __post_init__(self):
-        if self.total_mm_tokens_in_request is None:
-            self.total_mm_tokens_in_request = sum(
-                length for _, length in self.mm_contiguous_spans)
-
         if self.past_seen_token_num < 0:
             raise ValueError(
                 f"past_seen_token_num must be non-negative, got {self.past_seen_token_num}"
             )
+
+        # CUMSUM path: preferred when mask is available.
+        if self.is_embed_cumsum is not None:
+            cs = self.is_embed_cumsum
+            self.num_cached_mm_tokens = (int(cs[self.past_seen_token_num - 1])
+                                         if self.past_seen_token_num > 0 else 0)
+            self.num_mm_tokens_in_chunk = (int(cs[self.chunk_end_pos - 1]) -
+                                           self.num_cached_mm_tokens
+                                           if self.chunk_end_pos > 0 else 0)
+            self.total_embeds_in_request = int(cs[-1])
+            # Mirror to legacy field name for consumers not yet migrated.
+            self.total_mm_tokens_in_request = self.total_embeds_in_request
+            return
+
+        # LEGACY interval-arithmetic path. Requires mm_contiguous_spans.
+        if self.mm_contiguous_spans is None:
+            raise ValueError(
+                "MultimodalRuntimeData requires either is_embed_cumsum or "
+                "mm_contiguous_spans; both were None.")
+
+        if self.total_mm_tokens_in_request is None:
+            self.total_mm_tokens_in_request = sum(
+                length for _, length in self.mm_contiguous_spans)
 
         if any(length <= 0 for _, length in self.mm_contiguous_spans):
             raise ValueError(
@@ -274,6 +302,9 @@ class MultimodalRuntimeData:
             raise ValueError(
                 f"All span positions must be non-negative, got {self.mm_contiguous_spans}"
             )
+
+        if self.special_token_offsets is None:
+            self.special_token_offsets = []
 
         remainder = 0
         if self.num_cached_mm_tokens is None or self.num_mm_tokens_in_chunk is None:

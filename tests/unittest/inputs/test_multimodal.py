@@ -181,6 +181,105 @@ def test_compute_mm_is_embed_if_absent_populates_py_multimodal_data():
     )
 
 
+def test_runtime_data_cumsum_math_simplest():
+    """Simplest Consumer A path: all-True mask, full request, no cache.
+
+    Gates the cumsum kwarg + minimal __post_init__ math.
+    """
+    from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData
+
+    # All-True mask of length 5. is_embed_cumsum = [1, 2, 3, 4, 5].
+    is_embed = torch.ones(5, dtype=torch.bool)
+    cumsum = is_embed.to(torch.int64).cumsum(0)
+    rt = MultimodalRuntimeData(
+        past_seen_token_num=0,
+        chunk_end_pos=5,
+        is_embed_cumsum=cumsum,
+    )
+    assert rt.num_cached_mm_tokens == 0
+    assert rt.num_mm_tokens_in_chunk == 5
+    assert rt.total_embeds_in_request == 5
+
+
+def test_runtime_data_cumsum_math_partial_chunk():
+    """Chunk ends before end of mask — cached=0, in_chunk counts embeds in [0,chunk_end)."""
+    from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData
+
+    # Mask: [T, T, F, T, T, F, T] -> 5 embeds total. Chunk ends at pos 4 -> cumsum[3]=3.
+    is_embed = torch.tensor([True, True, False, True, True, False, True])
+    cumsum = is_embed.to(torch.int64).cumsum(0)
+    rt = MultimodalRuntimeData(
+        past_seen_token_num=0,
+        chunk_end_pos=4,
+        is_embed_cumsum=cumsum,
+    )
+    assert rt.num_cached_mm_tokens == 0
+    assert rt.num_mm_tokens_in_chunk == 3
+    assert rt.total_embeds_in_request == 5
+
+
+def test_runtime_data_cumsum_math_partial_cache():
+    """past_seen_token_num > 0 — cached counts embeds before the watermark."""
+    from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData
+
+    is_embed = torch.tensor([True, True, False, True, True, False, True])
+    cumsum = is_embed.to(torch.int64).cumsum(0)
+    rt = MultimodalRuntimeData(
+        past_seen_token_num=3,  # cumsum[2] = 2 -> 2 cached
+        chunk_end_pos=7,  # cumsum[6] = 5 -> in_chunk = 5-2 = 3
+        is_embed_cumsum=cumsum,
+    )
+    assert rt.num_cached_mm_tokens == 2
+    assert rt.num_mm_tokens_in_chunk == 3
+    assert rt.total_embeds_in_request == 5
+
+
+def test_runtime_data_cumsum_math_with_specials_mistral_shape():
+    """Mistral-shape reproducer — chunk boundary inside a unit with inline special.
+
+    Today's interval path got ambiguous counts here; cumsum path is correct
+    by construction. (Paired with the Mistral e2e reproducer in Commit 4.)
+    """
+    from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData
+
+    # Prompt layout: [text, img, img, special, img, img, img, text] len=8
+    # Unit spans positions 1..7 (length 6) with special at position 3.
+    # is_embed over the whole prompt:
+    # pos:       0      1     2     3      4     5     6     7
+    # mask:      F      T     T     F      T     T     T     F
+    is_embed = torch.tensor([False, True, True, False, True, True, True, False])
+    cumsum = is_embed.to(torch.int64).cumsum(0)
+
+    # Chunk 0: pos 0..5 -> covers mask[0..4]: [F,T,T,F,T] -> 3 embeds.
+    rt0 = MultimodalRuntimeData(past_seen_token_num=0, chunk_end_pos=5, is_embed_cumsum=cumsum)
+    assert rt0.num_cached_mm_tokens == 0
+    assert rt0.num_mm_tokens_in_chunk == 3
+    assert rt0.total_embeds_in_request == 5
+
+    # Chunk 1: pos 5..8 (rest of the request after chunk 0 was processed).
+    rt1 = MultimodalRuntimeData(past_seen_token_num=5, chunk_end_pos=8, is_embed_cumsum=cumsum)
+    assert rt1.num_cached_mm_tokens == 3
+    assert rt1.num_mm_tokens_in_chunk == 2
+    assert rt1.total_embeds_in_request == 5
+
+
+def test_runtime_data_cumsum_math_negative_past_seen_rejected():
+    """Guard: past_seen_token_num must be non-negative."""
+    from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData
+
+    cumsum = torch.arange(1, 6, dtype=torch.int64)
+    with pytest.raises(ValueError, match="past_seen_token_num must be non-negative"):
+        MultimodalRuntimeData(past_seen_token_num=-1, chunk_end_pos=5, is_embed_cumsum=cumsum)
+
+
+def test_runtime_data_requires_either_cumsum_or_spans():
+    """Guard: must supply EITHER cumsum OR legacy spans."""
+    from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData
+
+    with pytest.raises(ValueError, match="requires either is_embed_cumsum or"):
+        MultimodalRuntimeData(past_seen_token_num=0, chunk_end_pos=5)
+
+
 @pytest.mark.parametrize(
     "chunk_start,chunk_end,expected_lo_hi",
     [
