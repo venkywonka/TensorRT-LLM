@@ -777,12 +777,9 @@ def compute_mm_embed_mask_if_absent(
     ``input_processor`` to produce per-logical-unit bool masks and stores
     them at ``extra_processed_inputs["multimodal_data"]["multimodal_embed_mask"]``.
 
-    Safe to call after any input-processing path — if the processor cannot
-    provide vocabulary or MM token information, the call is silently skipped.
-
-    Qwen3.5-VL-MoE intake still writes ``special_token_offsets`` via
-    ``layout_metadata`` (the AD executor reads it as a fallback when the
-    mask is absent); this helper leaves that nested dict alone.
+    Silently skipped if the processor provides neither ``vocab_size`` nor
+    ``mm_token_ids``. Does not touch ``layout_metadata`` — Qwen3.5-VL-MoE
+    intake still writes ``special_token_offsets`` there as a fallback.
     """
     if extra_processed_inputs is None:
         return

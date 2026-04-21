@@ -142,18 +142,13 @@ class MultimodalInput:
           2. mm_token_ids if available -> isin(prompt, mm_token_ids), then
              subtract specials when declared.
           3. vocab_size fallback -> prompt >= vocab_size, then subtract specials.
-
-        Paths 2 and 3 preserve the legacy `filter_mm_token_from_input_ids`
-        predicate byte-for-byte — the zero-regression guarantee.
         """
-        # Second call is a no-op (backstop may fire after intake already ran).
         if self.__dict__.get("_embed_mask_flat") is not None:
             return self.__dict__["_embed_mask_flat"]
 
         if not isinstance(prompt_token_ids, torch.Tensor):
             prompt_token_ids = torch.as_tensor(prompt_token_ids)
 
-        # Path 1: stitch from per-unit masks if the processor populated them.
         if self.multimodal_embed_mask is not None:
             mask = torch.zeros(prompt_token_ids.shape[0],
                                dtype=torch.bool,
@@ -169,7 +164,6 @@ class MultimodalInput:
                     mask[pos:pos + length] = per_unit
             return self._store_embed_mask_flat(mask)
 
-        # Path 2/3: predicate over prompt_token_ids.
         if mm_token_ids is not None:
             mm_token_ids = mm_token_ids.to(device=prompt_token_ids.device,
                                            dtype=prompt_token_ids.dtype)
@@ -185,10 +179,8 @@ class MultimodalInput:
         return self._store_embed_mask_flat(mask)
 
     def _store_embed_mask_flat(self, mask: torch.Tensor) -> torch.Tensor:
-        # Write mask into the backing slot AND invalidate any stale
-        # @cached_property values (which may have been populated with None by a
-        # pre-materialization access). Without this, embed_mask_flat and
-        # embed_mask_cumsum return stale None after materialize_embed_mask runs.
+        # Invalidate any stale @cached_property values populated before the
+        # mask was materialized; without the pops they would pin None.
         self.__dict__["_embed_mask_flat"] = mask
         self.__dict__.pop("embed_mask_flat", None)
         self.__dict__.pop("embed_mask_cumsum", None)
@@ -196,13 +188,7 @@ class MultimodalInput:
 
     @cached_property
     def embed_mask_flat(self) -> Optional[torch.Tensor]:
-        """Return the cached bool[request_seq_len] mask, or None if not materialized.
-
-        Note: materialize_embed_mask writes into self.__dict__["_embed_mask_flat"]
-        directly, so this property reads the cache when available; when it
-        hasn't been called, returns None without attempting lazy stitching
-        (caller must pass prompt_token_ids + vocab via materialize_embed_mask).
-        """
+        """Return the cached bool[request_seq_len] mask, or None if not materialized."""
         return self.__dict__.get("_embed_mask_flat")
 
     @cached_property
@@ -220,7 +206,7 @@ class MultimodalInput:
         """Translate [chunk_start, chunk_end) to [enc_lo, enc_hi) via cumsum.
 
         Input positions are in the full prompt; output positions are row
-        indices into the encoder output tensor. See goals.md §5.2.
+        indices into the encoder output tensor.
         """
         cs = self.embed_mask_cumsum
         enc_lo = int(cs[chunk_start - 1]) if chunk_start > 0 else 0

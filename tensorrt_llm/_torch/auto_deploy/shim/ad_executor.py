@@ -77,15 +77,12 @@ from ..utils.logger import ad_logger
 from .interface import CachedSequenceInterface, GetInferenceModel
 
 # Non-tensor multimodal metadata consumed by _store_prefill_multimodal_metadata.
-# These keys are read directly from py_multimodal_data inside that helper and
-# must NOT leak into the generic extra_args dict (which expects tensors).
+# These keys must NOT leak into the generic extra_args dict — entries there
+# are expected to be tensors, and these are lists or nested dicts.
 _RESERVED_MM_DATA_KEYS = frozenset(
     {
         "layout_metadata",
         "special_token_offsets",
-        # Consumed by _store_prefill_multimodal_metadata to build
-        # mm_chunk_embed_mask; must NOT leak into the generic extra_args dict
-        # (entries there are expected to be tensors, not list[tensor]).
         "multimodal_embed_mask",
     }
 )
@@ -616,9 +613,6 @@ class ADEngine(ModelEngine):
         flat_start_list: List[int] = []
         count_list: List[int] = []
         cumsum_total_mm = 0
-        # Embed-mask path: concatenate per-request chunk-sliced flat masks.
-        # Populated only for requests whose py_multimodal_data carries
-        # multimodal_embed_mask (per-unit bool masks).
         mm_chunk_embed_mask_flat: List[bool] = []
         mm_chunk_embed_mask_cu_seqlen: List[int] = [0]
 
@@ -652,16 +646,13 @@ class ADEngine(ModelEngine):
             mm_token_positions_flat.extend(mm_pos_list)
             mm_token_lengths_flat.extend(mm_len_list)
 
-            # Single source of truth: per-unit embed masks. Derive the legacy
-            # mm_special_offsets_* tensors from the mask (False positions
-            # inside a unit are specials, indexed into the flat concat of all
-            # MM tokens for this request). Fall back to the upstream
-            # special_token_offsets emission only when the mask is absent
-            # (e.g., Qwen3.5-VL-MoE custom intake that doesn't dual-write).
-            # TODO: migrate the Qwen3.5-VL-MoE input processors
-            # (tensorrt_llm/_torch/auto_deploy/models/custom/modeling_qwen3_5_moe{,_ir}.py)
-            # to emit multimodal_embed_mask directly, then delete this fallback
-            # plus layout_metadata["special_token_offsets"] across the codebase.
+            # Derive mm_special_offsets from per-unit embed masks (False
+            # positions inside a unit are specials). Fall back to
+            # layout_metadata["special_token_offsets"] for input processors
+            # that don't yet emit multimodal_embed_mask.
+            # TODO: migrate Qwen3.5-VL-MoE processors
+            # (_torch/auto_deploy/models/custom/modeling_qwen3_5_moe{,_ir}.py)
+            # to emit multimodal_embed_mask directly, then delete this fallback.
             per_unit_masks = (
                 req.py_multimodal_data.get("multimodal_embed_mask")
                 if req.py_multimodal_data
@@ -702,8 +693,7 @@ class ADEngine(ModelEngine):
                 mm_chunk_embed_mask_flat.extend(full_mask[begin_compute:end_compute])
                 mm_chunk_embed_mask_cu_seqlen.append(mm_chunk_embed_mask_cu_seqlen[-1] + chunk_len)
             else:
-                # Request has no per-unit mask; append 0-length marker so
-                # cu_seqlen stays aligned with request order.
+                # 0-length marker keeps cu_seqlen aligned with request order.
                 mm_chunk_embed_mask_cu_seqlen.append(mm_chunk_embed_mask_cu_seqlen[-1])
             if not mm_pos or not mm_len:
                 flat_start_list.append(0)
@@ -718,15 +708,11 @@ class ADEngine(ModelEngine):
                 prompt_len=len(all_prompt_tokens),
             )
             if per_unit_masks is None:
-                # No MM payload on this request (or none requiring embed
-                # staging); flat_start / count stay 0 so concatenated cursors
-                # don't advance.
+                # Leave flat_start / count at 0 so concatenated cursors don't advance.
                 flat_start_list.append(0)
                 count_list.append(0)
                 continue
 
-            # mm_chunk_embed_mask_flat for this request was already stitched
-            # above. Reuse that stitched bool mask for the cumsum derivation.
             flat_mask = torch.zeros(len(all_prompt_tokens), dtype=torch.bool)
             for j, per_unit in enumerate(per_unit_masks):
                 unit_pos = int(mm_pos_list[j])
@@ -766,10 +752,8 @@ class ADEngine(ModelEngine):
         extra_args["mm_special_offsets"] = [
             torch.tensor(mm_special_offsets_flat, dtype=torch.int32, device="cpu")
         ]
-        # Embed-mask path: emit only when at least one request contributed a
-        # per-unit mask. cu_seqlen has N+1 entries (0-indexed running sum) so
-        # downstream consumers can split the flat mask back into per-request
-        # slices without a separate length array.
+        # cu_seqlen has N+1 entries (0-indexed running sum) so downstream
+        # consumers can split the flat mask into per-request slices.
         if any(
             req.py_multimodal_data and "multimodal_embed_mask" in req.py_multimodal_data
             for req in prefill_requests

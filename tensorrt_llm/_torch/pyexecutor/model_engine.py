@@ -2304,9 +2304,8 @@ class PyTorchModelEngine(ModelEngine):
             num_cached_tokens_per_seq.append(past_seen_token_num)
             request.cached_tokens = num_cached_tokens_per_seq[-1]
 
-            # Multimodal — require the embed mask only when this iteration is
-            # partial (chunked prefill or KV-cache reuse). Non-partial
-            # iterations degrade gracefully when the mask is absent.
+            # Embed mask is required only for partial iterations (chunked
+            # prefill or KV-cache reuse); full-prefill degrades gracefully.
             require_mm_embed_mask_if_needed(
                 request.py_multimodal_data,
                 begin_compute=past_seen_token_num,
