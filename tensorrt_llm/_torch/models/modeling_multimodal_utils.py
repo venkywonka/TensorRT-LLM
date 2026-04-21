@@ -362,8 +362,8 @@ def fuse_input_embeds(
 
     mm_embed = torch.cat(mm_embeds, dim=0)
 
-    if multimodal_params is not None and all(p.multimodal_input is not None
-                                             for p in multimodal_params):
+    if multimodal_params and all(p.multimodal_input is not None
+                                 for p in multimodal_params):
         slices = []
         cursor = 0
         for p in multimodal_params:
