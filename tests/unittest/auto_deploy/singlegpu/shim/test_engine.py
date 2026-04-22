@@ -434,8 +434,8 @@ def test_ad_engine_stages_mm_chunk_embed_mask_from_mask_field():
     # Unit at pos 2, length 4. Flat mask: positions 2,3,5 embed; 4 special;
     # 0,1,6,7 text. Chunk covers absolute positions [4:8] -> mask slice
     # becomes [F, T, F, F] (pos 4 special, pos 5 embed, pos 6/7 text).
-    # Real intake (find_mm_token_positions) emits special_token_offsets
-    # alongside the mask; mimic that co-emission here.
+    # Real intake (_compute_mm_masks + _find_mm_token_start_pos_from_masks)
+    # emits special_token_offsets alongside the mask; mimic that co-emission here.
     tokens = [1, 2, 99, 99, 99, 99, 3, 4]
     req = _DummyRequest(tokens=tokens, begin=4, size=4, seq_slot=0)
     req.multimodal_positions = [2]

@@ -7,8 +7,9 @@ import torch
 from tensorrt_llm._torch.models.modeling_multimodal_utils import (
     find_input_mm_embeds, get_multimodal_embeddings)
 from tensorrt_llm.inputs.multimodal import (MultimodalParams,
-                                            MultimodalRuntimeData,
-                                            find_mm_token_positions)
+                                            MultimodalRuntimeData, _as_tensor,
+                                            _compute_mm_masks,
+                                            _find_mm_token_start_pos_from_masks)
 from tensorrt_llm.inputs.registry import compute_mm_embed_mask_if_absent
 
 # Embedding dim kept small — functions under test only index along dim 0.
@@ -636,14 +637,38 @@ class TestGetMultimodalEmbeddings:
             "multimodal_embedding"].shape == (9, _EMBED_DIM)
 
 
-class TestFindMmTokenPositions:
-    """Test cases for find_mm_token_positions — verifies 2-tuple return
-    (start_positions, special_positions)."""
+def _find_mm_token_start_positions(input_ids,
+                                   num_mm_tokens,
+                                   vocab_size=None,
+                                   mm_token_ids=None,
+                                   mm_special_token_ids=None):
+    """Compose the two intake helpers into the 2-tuple the tests assert on.
+
+    Kept as a local test-file helper rather than a production wrapper since
+    the composition is not used outside tests — production call sites in
+    ``multimodal_hashing_process`` use the masks emitted by ``_compute_mm_masks``
+    for purposes other than just position-finding (e.g., stashing the embed
+    mask), so a single-purpose wrapper would be strictly worse for them.
+    """
+    ids = _as_tensor(input_ids)
+    if ids.numel() == 0:
+        return [], []
+    mm_mask, _, special_mask = _compute_mm_masks(ids, vocab_size, mm_token_ids,
+                                                 mm_special_token_ids)
+    return _find_mm_token_start_pos_from_masks(mm_mask, special_mask,
+                                               num_mm_tokens)
+
+
+class TestFindMmTokenStartPositions:
+    """Integration tests for the intake position-finding composition:
+    ``_compute_mm_masks`` + ``_find_mm_token_start_pos_from_masks``.
+    Verifies the 2-tuple ``(start_positions, special_positions)`` returned
+    by composing the two helpers via ``_find_mm_token_start_positions``."""
 
     def test_early_return_no_mm_tokens(self):
         """When input has no MM tokens, should return two empty lists."""
         input_ids = torch.tensor([1, 2, 3, 4, 5])
-        result = find_mm_token_positions(
+        result = _find_mm_token_start_positions(
             input_ids=input_ids,
             num_mm_tokens=[],
             vocab_size=100,
@@ -653,7 +678,7 @@ class TestFindMmTokenPositions:
     def test_early_return_no_match(self):
         """When mm_token_ids don't match anything in input_ids."""
         input_ids = torch.tensor([1, 2, 3, 4, 5])
-        result = find_mm_token_positions(
+        result = _find_mm_token_start_positions(
             input_ids=input_ids,
             num_mm_tokens=[2],
             mm_token_ids=torch.tensor([99]),
@@ -663,7 +688,7 @@ class TestFindMmTokenPositions:
     def test_basic_contiguous_tokens(self):
         """Basic case: contiguous MM tokens identified by out-of-vocab IDs."""
         input_ids = torch.tensor([1, 2, 10, 11, 12, 3, 4, 10, 11, 5])
-        start_pos, special_pos = find_mm_token_positions(
+        start_pos, special_pos = _find_mm_token_start_positions(
             input_ids=input_ids,
             num_mm_tokens=[3, 2],
             vocab_size=10,
@@ -674,7 +699,7 @@ class TestFindMmTokenPositions:
     def test_with_mm_token_ids(self):
         """MM tokens identified by explicit token IDs."""
         input_ids = torch.tensor([1, 5, 5, 5, 2, 3, 5, 5, 4])
-        start_pos, _ = find_mm_token_positions(
+        start_pos, _ = _find_mm_token_start_positions(
             input_ids=input_ids,
             num_mm_tokens=[3, 2],
             mm_token_ids=torch.tensor([5]),
@@ -684,7 +709,7 @@ class TestFindMmTokenPositions:
     def test_with_special_tokens(self):
         """Special tokens (e.g. image_break) detected within MM region."""
         input_ids = torch.tensor([1, 5, 5, 6, 5, 7, 2])
-        start_pos, special_pos = find_mm_token_positions(
+        start_pos, special_pos = _find_mm_token_start_positions(
             input_ids=input_ids,
             num_mm_tokens=[5],
             mm_token_ids=torch.tensor([5]),
@@ -697,7 +722,7 @@ class TestFindMmTokenPositions:
         """One unit with interleaved non-MM text — start is the first MM
         position; num_mm_tokens stays the encoder-row count."""
         input_ids = torch.tensor([1, 100, 100, 2, 3, 100, 100, 100, 4])
-        start_pos, _ = find_mm_token_positions(
+        start_pos, _ = _find_mm_token_start_positions(
             input_ids=input_ids,
             num_mm_tokens=[5],
             vocab_size=10,
@@ -707,7 +732,7 @@ class TestFindMmTokenPositions:
     def test_non_contiguous_multiple_items(self):
         """Multiple items with non-contiguous MM positions."""
         input_ids = torch.tensor([0, 100, 100, 0, 0, 100, 0, 0, 100, 100, 0])
-        start_pos, _ = find_mm_token_positions(
+        start_pos, _ = _find_mm_token_start_positions(
             input_ids=input_ids,
             num_mm_tokens=[3, 2],
             vocab_size=10,
@@ -718,7 +743,7 @@ class TestFindMmTokenPositions:
         """Should raise ValueError when neither vocab_size nor mm_token_ids provided."""
         with pytest.raises(ValueError,
                            match="Provide either mm_token_ids or vocab_size"):
-            find_mm_token_positions(
+            _find_mm_token_start_positions(
                 input_ids=torch.tensor([1, 2, 3]),
                 num_mm_tokens=[1],
             )

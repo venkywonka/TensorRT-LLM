@@ -857,81 +857,103 @@ def require_mm_embed_mask_if_needed(
     )
 
 
-def find_mm_token_positions(
-    input_ids: Union[torch.Tensor, List[int], np.ndarray],
-    num_mm_tokens: List[int],
-    vocab_size: Optional[int] = None,
-    mm_token_ids: Optional[torch.Tensor] = None,
-    mm_special_token_ids: Optional[torch.Tensor] = None
-) -> Tuple[List[int], List[int]]:
-    """Locate logical-unit starts and special-token offsets in one scan.
+def _as_tensor(
+    input_ids: Union[torch.Tensor, List[int], np.ndarray], ) -> torch.Tensor:
+    """Coerce input_ids to a torch.Tensor without copying when possible.
 
-    At least one of ``vocab_size`` or ``mm_token_ids`` must be provided.
-    If ``mm_token_ids`` is provided, ``vocab_size`` is ignored.
+    Does NOT reshape to 1D or cast to long — callers are responsible for
+    those invariants if they matter. Equivalent to ``torch.as_tensor`` for
+    tensor/ndarray inputs; falls back to ``torch.tensor`` for list inputs
+    (which defaults to ``torch.long`` for Python ints).
+    """
+    if isinstance(input_ids, torch.Tensor):
+        return input_ids
+    if isinstance(input_ids, np.ndarray):
+        return torch.from_numpy(input_ids)
+    return torch.tensor(input_ids)
 
-    Args:
-        input_ids: Token sequence (tensor, list, or numpy array).
-        num_mm_tokens: Per-logical-unit MM-token counts (embed slots plus any
-            inline specials that are themselves MM tokens); one entry per
-            multimodal item.
-        vocab_size: Vocabulary size; tokens >= vocab_size are MM when
-            ``mm_token_ids`` is not given.
-        mm_token_ids: Explicit MM token IDs.
-        mm_special_token_ids: Special MM token IDs (e.g. image_break).
 
-    Returns:
-        start_positions: Prompt position of each logical unit's first MM token.
-        start_special_token_positions: Indices into the flat MM-token list
-            where specials occur.
+def _compute_mm_masks(
+    input_ids: torch.Tensor,
+    vocab_size: Optional[int],
+    mm_token_ids: Optional[torch.Tensor],
+    mm_special_token_ids: Optional[torch.Tensor],
+) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    """Compute MM masks in a single pass.
+
+    Returns ``(mm_mask, embed_mask, special_mask)`` where:
+      - ``mm_mask[i]`` is True iff position i is any MM token (embed slot OR special)
+      - ``embed_mask[i]`` is True iff position i is an embed slot (specials excluded)
+      - ``special_mask[i]`` is True iff position i is a special (None when
+        ``mm_special_token_ids`` is not provided)
+
+    At least one of ``vocab_size`` or ``mm_token_ids`` must be provided; if
+    both, ``mm_token_ids`` takes precedence (matching legacy behavior).
+
+    Each call performs at most two full-sequence ``isin`` scans — one for
+    regular MM tokens and one for specials — and reuses them to derive all
+    three masks. Callers that need multiple masks should share one invocation
+    rather than recomputing predicates.
     """
     if mm_token_ids is None and vocab_size is None:
         raise ValueError(
-            "Provide either mm_token_ids or vocab_size to find multimodal token positions"
+            "Provide either mm_token_ids or vocab_size to compute multimodal masks"
         )
     if mm_token_ids is not None and vocab_size is not None:
         logger.debug(
             "Both mm_token_ids and vocab_size are provided, using mm_token_ids and ignoring vocab_size"
         )
 
-    if not isinstance(input_ids, torch.Tensor):
-        if isinstance(input_ids, list):
-            input_ids = torch.tensor(input_ids)
-        elif isinstance(input_ids, np.ndarray):
-            input_ids = torch.from_numpy(input_ids)
-
-    if input_ids.numel() == 0:
-        return [], []
-
-    if mm_token_ids is None:
-        mm_mask = input_ids >= vocab_size
-        if mm_special_token_ids is not None:
-            mm_special_token_ids = mm_special_token_ids.to(
-                device=input_ids.device, dtype=input_ids.dtype)
-            mm_mask = mm_mask | torch.isin(input_ids, mm_special_token_ids)
+    if mm_special_token_ids is not None:
+        mm_special_token_ids = mm_special_token_ids.to(device=input_ids.device,
+                                                       dtype=input_ids.dtype)
+        special_mask = torch.isin(input_ids, mm_special_token_ids)
     else:
+        special_mask = None
+
+    if mm_token_ids is not None:
         mm_token_ids = mm_token_ids.to(device=input_ids.device,
                                        dtype=input_ids.dtype)
         if mm_token_ids.ndim != 1:
             raise ValueError("mm_token_ids must be a 1D tensor")
-        if mm_special_token_ids is not None:
-            mm_special_token_ids = mm_special_token_ids.to(
-                device=input_ids.device, dtype=input_ids.dtype)
-            mm_token_ids = torch.unique(
-                torch.cat([mm_token_ids, mm_special_token_ids]))
-        else:
-            mm_token_ids = torch.unique(mm_token_ids)
-        mm_mask = torch.isin(input_ids, mm_token_ids)
+        embed_mask = torch.isin(input_ids, mm_token_ids)
+        if special_mask is not None:
+            embed_mask = embed_mask & ~special_mask
+    else:
+        embed_mask = input_ids >= vocab_size
+        if special_mask is not None:
+            embed_mask = embed_mask & ~special_mask
 
+    mm_mask = embed_mask if special_mask is None else embed_mask | special_mask
+    return mm_mask, embed_mask, special_mask
+
+
+def _find_mm_token_start_pos_from_masks(
+    mm_mask: torch.Tensor,
+    special_mask: Optional[torch.Tensor],
+    num_mm_tokens: List[int],
+) -> Tuple[List[int], List[int]]:
+    """Compute indices where each logical multimodal unit starts from precomputed masks.
+
+    Args:
+        mm_mask: Boolean tensor; True for multimodal tokens.
+        special_mask: Optional boolean tensor for special MM tokens.
+        num_mm_tokens: List of multimodal tokens per logical unit.
+
+    Returns:
+        start_positions: Indices where each logical MM unit starts.
+        start_special_token_positions: Indices (within MM tokens) of special tokens.
+    """
     if not torch.any(mm_mask):
         return [], []
 
     mm_positions = torch.where(mm_mask)[0]
 
-    start_special_token_positions: List[int] = []
-    if mm_special_token_ids is not None:
-        tokens_at_mm = input_ids[mm_positions]
+    if special_mask is not None:
         start_special_token_positions = torch.where(
-            torch.isin(tokens_at_mm, mm_special_token_ids))[0].tolist()
+            special_mask[mm_positions])[0].tolist()
+    else:
+        start_special_token_positions = []
 
     lengths_t = torch.tensor(num_mm_tokens)
     assert mm_positions.numel() == lengths_t.sum().item(), (

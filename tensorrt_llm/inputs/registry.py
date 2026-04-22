@@ -19,8 +19,9 @@ from ..logger import logger
 from ..sampling_params import SamplingParams
 from .content_format import ContentFormat
 from .data import TextPrompt
-from .multimodal import (MultimodalInput, apply_mm_hashes, default_hasher,
-                         find_mm_token_lengths, find_mm_token_positions,
+from .multimodal import (MultimodalInput, _as_tensor, _compute_mm_masks,
+                         _find_mm_token_start_pos_from_masks, apply_mm_hashes,
+                         default_hasher, find_mm_token_lengths,
                          hexdigest_to_int32, validate_mm_inputs)
 
 N = TypeVar("N", bound=Type[nn.Module])
@@ -241,7 +242,7 @@ class BaseMultimodalInputProcessor(ABC):
 
         The returned IDs are used as an inclusion mask by the embed-mask
         producer (``compute_mm_embed_mask_if_absent`` /
-        ``find_mm_token_positions``) to classify each prompt position as
+        ``_compute_mm_masks``) to classify each prompt position as
         embed vs non-embed. Include every token the model uses to represent
         a logical unit — placeholders AND any in-prompt framing tokens
         (e.g. ``image_break``, ``image_end``) that sit between placeholders —
@@ -744,8 +745,9 @@ def _get_single_mm_token_lengths(
     if not num_mm_tokens_by_key:
         return None
     # find_mm_token_lengths returns Dict[modality, List[int]], e.g. {"image": [2928, 2928]}.
-    # We need the list of per-item lengths (for find_mm_token_positions), We take the first modality's
-    # list; multi-modality is not yet supported (see TODO in multimodal_hashing_process).
+    # We need the list of per-item lengths (for _find_mm_token_start_pos_from_masks). We take
+    # the first modality's list; multi-modality is not yet supported
+    # (see TODO in multimodal_hashing_process).
     num_mm_tokens = next(iter(num_mm_tokens_by_key.values()))
     if len(num_mm_tokens) <= 0:
         return None
@@ -785,22 +787,14 @@ def compute_mm_embed_mask_if_absent(
             "vocab_size nor mm_token_ids — skipping mask computation.")
         return
 
-    input_ids = prompt_token_ids if isinstance(
-        prompt_token_ids, torch.Tensor) else torch.as_tensor(prompt_token_ids)
-    if mm_token_ids is not None:
-        mm_token_ids = mm_token_ids.to(device=input_ids.device,
-                                       dtype=input_ids.dtype)
-        mask = torch.isin(input_ids, mm_token_ids)
-    else:
-        mask = input_ids >= vocab_size
-
-    mm_special_token_ids = input_processor.get_mm_special_token_ids()
-    if mm_special_token_ids is not None:
-        mm_special_token_ids = mm_special_token_ids.to(device=input_ids.device,
-                                                       dtype=input_ids.dtype)
-        mask = mask & ~torch.isin(input_ids, mm_special_token_ids)
-
-    mm_data["multimodal_embed_mask"] = mask
+    input_ids = _as_tensor(prompt_token_ids)
+    _, embed_mask, _ = _compute_mm_masks(
+        input_ids,
+        vocab_size=vocab_size,
+        mm_token_ids=mm_token_ids,
+        mm_special_token_ids=input_processor.get_mm_special_token_ids(),
+    )
+    mm_data["multimodal_embed_mask"] = embed_mask
 
 
 def create_input_processor_with_hash(
@@ -934,14 +928,25 @@ def create_input_processor_with_hash(
             raise ValueError(
                 "Cannot locate vocab_size or mm_token_ids for multimodal token preprocessing"
             )
-        start_positions, start_special_token_positions = find_mm_token_positions(
-            input_ids=prompt_token_ids,  # token sequence
-            num_mm_tokens=
-            num_mm_tokens,  # list of lengths of each chunk of visual tokens
-            vocab_size=vocab_size,
-            mm_token_ids=mm_ids,
-            mm_special_token_ids=mm_special_token_ids,
-        )
+        # Compute all three masks once here and reuse downstream. The embed
+        # mask is stashed into extra_processed_inputs so the wrapper's
+        # subsequent compute_mm_embed_mask_if_absent call short-circuits via
+        # its idempotency guard, avoiding a second full-sequence isin pass.
+        input_ids_tensor = _as_tensor(prompt_token_ids)
+        if input_ids_tensor.numel() == 0:
+            start_positions, start_special_token_positions = [], []
+        else:
+            mm_mask, embed_mask, special_mask = _compute_mm_masks(
+                input_ids_tensor,
+                vocab_size=vocab_size,
+                mm_token_ids=mm_ids,
+                mm_special_token_ids=mm_special_token_ids,
+            )
+            extra_processed_inputs["multimodal_data"].setdefault(
+                "multimodal_embed_mask", embed_mask)
+            start_positions, start_special_token_positions = (
+                _find_mm_token_start_pos_from_masks(mm_mask, special_mask,
+                                                    num_mm_tokens))
         # Store special token offsets if available
         if len(start_special_token_positions
                ) > 0 and mm_special_token_ids is not None:

@@ -651,11 +651,8 @@ class ADEngine(ModelEngine):
                 if req.py_multimodal_data
                 else None
             )
-            # Indices into this request's flat MM-token list where those
-            # tokens are specials rather than embed slots. Pre-computed at
-            # intake (correct for non-contiguous units) — do NOT re-derive
-            # from flat_mask[pos:pos+len], which mis-slices when the unit is
-            # non-contiguous.
+            # special_token_offsets indices into the dense MM-token-list (which includes both embeds and specials).
+            # It does not index into the prompt-position-indexed flat_mask.
             special_offsets = list(
                 (req.py_multimodal_data or {}).get("special_token_offsets")
                 or (layout_metadata or {}).get("special_token_offsets", [])
