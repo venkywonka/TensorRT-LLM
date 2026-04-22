@@ -23,9 +23,7 @@ default_hasher = blake3
 class MultimodalInput:
     """Per-logical-unit multimodal metadata for KV-cache hashing (C++ layer).
 
-    Indexed per logical unit (one image, one video). The per-position embed/
-    non-embed decision is carried as a flat bool tensor in
-    ``py_multimodal_data["multimodal_embed_mask"]`` on the request, not here.
+    Indexed per logical unit (one image, video, or audio clip).
     """
 
     multimodal_hashes: List[List[int]]
@@ -40,17 +38,25 @@ class MultimodalInput:
     a unit's MM tokens are non-contiguous.
 
     This dual-role field is consumed by (a) Python encoder-row splitters
-    (``llm_request.allocate_multimodal_embedding_handles``, ``sampler``,
-    ``model_engine._forward_step_for_mm_encoder_only``) which need the
-    MM-token/encoder-row count, and (b) the C++ KV-cache key hasher
-    (``cpp/tensorrt_llm/batch_manager/blockKey.cpp``) which treats
-    ``startPos + length`` as an outer bounding-box and checks block overlap
-    against it. Those two semantics only agree when a logical unit's MM
-    tokens are contiguous. For non-contiguous units, KV-cache block keys
-    can under-cover the tail of the unit (pre-existing latent limitation,
-    unchanged by the embed-mask refactor). Resolving this requires either
-    adding a separate ``multimodal_outer_lengths`` field fed to the C++
-    binding, or teaching the C++ hasher to read the flat embed mask.
+    (``_torch/pyexecutor/llm_request.py::PyResult.append_mm_embeddings``,
+    ``_torch/pyexecutor/model_engine.py::_forward_step_mm_encoder_only``,
+    and ``_torch/pyexecutor/sampler.py`` which forwards to the former)
+    which need the MM-token/encoder-row count, and (b) the C++ KV-cache
+    key hasher (``cpp/tensorrt_llm/batch_manager/blockKey.cpp``) which
+    treats ``startPos + length`` as an outer bounding-box and checks
+    block overlap against it. Those two semantics only agree when a
+    logical unit's MM tokens are contiguous. For non-contiguous units,
+    any KV block whose ``startTokenIdx >= startPos + length`` fails the
+    overlap check even when it still sits inside the unit's outer span —
+    the unit's ``mmHash`` is not folded into that block's key, so two
+    distinct images sharing identical prompt-tail text can collide in
+    the KV cache. Pre-existing latent limitation, unchanged by the
+    embed-mask refactor. Resolving this requires either adding a
+    separate ``multimodal_outer_lengths`` field fed to the C++ binding,
+    or teaching the C++ hasher to read the flat embed mask.
+
+    TODO(TRTLLM-12143): fix non-contiguous-unit KV-cache key
+    under-coverage. See https://jirasw.nvidia.com/browse/TRTLLM-12143.
     """
 
     multimodal_uuids: Optional[List[Optional[str]]] = None
@@ -856,7 +862,7 @@ def find_mm_token_positions(
     num_mm_tokens: List[int],
     vocab_size: Optional[int] = None,
     mm_token_ids: Optional[torch.Tensor] = None,
-    mm_special_token_ids: Optional[torch.Tensor] = None,
+    mm_special_token_ids: Optional[torch.Tensor] = None
 ) -> Tuple[List[int], List[int]]:
     """Locate logical-unit starts and special-token offsets in one scan.
 
@@ -867,7 +873,7 @@ def find_mm_token_positions(
         input_ids: Token sequence (tensor, list, or numpy array).
         num_mm_tokens: Per-logical-unit MM-token counts (embed slots plus any
             inline specials that are themselves MM tokens); one entry per
-            image/video.
+            multimodal item.
         vocab_size: Vocabulary size; tokens >= vocab_size are MM when
             ``mm_token_ids`` is not given.
         mm_token_ids: Explicit MM token IDs.

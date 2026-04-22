@@ -658,7 +658,8 @@ class ADEngine(ModelEngine):
             # non-contiguous.
             special_offsets = list(
                 (req.py_multimodal_data or {}).get("special_token_offsets")
-                or (layout_metadata or {}).get("special_token_offsets", []))
+                or (layout_metadata or {}).get("special_token_offsets", [])
+            )
             mm_special_offsets_cu_seqlen.append(
                 mm_special_offsets_cu_seqlen[-1] + len(special_offsets)
             )
@@ -667,8 +668,8 @@ class ADEngine(ModelEngine):
             chunk_len = end_compute - begin_compute
             if flat_mask is not None and chunk_len > 0:
                 mm_chunk_embed_mask_slices.append(
-                    flat_mask[begin_compute:end_compute].to(
-                        dtype=torch.bool, device="cpu"))
+                    flat_mask[begin_compute:end_compute].to(dtype=torch.bool, device="cpu")
+                )
                 mm_chunk_embed_mask_cu_seqlen.append(mm_chunk_embed_mask_cu_seqlen[-1] + chunk_len)
             else:
                 # 0-length marker keeps cu_seqlen aligned with request order.
@@ -725,9 +726,11 @@ class ADEngine(ModelEngine):
             req.py_multimodal_data and "multimodal_embed_mask" in req.py_multimodal_data
             for req in prefill_requests
         ):
-            mm_chunk_embed_mask = (torch.cat(mm_chunk_embed_mask_slices)
-                                   if mm_chunk_embed_mask_slices else
-                                   torch.empty(0, dtype=torch.bool, device="cpu"))
+            mm_chunk_embed_mask = (
+                torch.cat(mm_chunk_embed_mask_slices)
+                if mm_chunk_embed_mask_slices
+                else torch.empty(0, dtype=torch.bool, device="cpu")
+            )
             extra_args["mm_chunk_embed_mask"] = [mm_chunk_embed_mask]
             extra_args["mm_chunk_embed_mask_cu_seqlen"] = [
                 torch.tensor(mm_chunk_embed_mask_cu_seqlen, dtype=torch.int32, device="cpu")

@@ -351,7 +351,9 @@ def fuse_input_embeds(
 
     mm_embed = torch.cat(mm_embeds, dim=0)
 
+    # TODO: support the case where only one index tensor is provided, the other is derived as the complement (try to avoid implicit host-device synchronization)
     if text_token_indices is None or mm_token_indices is None:
+        # NOTE: This function involves host-device synchronization due to torch.where() used in filter_mm_token_from_input_ids.
         text_token_indices, mm_token_indices = filter_mm_token_from_input_ids(
             input_ids,
             vocab_size=embedding_layer.num_embeddings,

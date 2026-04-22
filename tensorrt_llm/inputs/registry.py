@@ -250,17 +250,6 @@ class BaseMultimodalInputProcessor(ABC):
         Omitting framing IDs will break downstream per-unit accounting
         (hashing, KV-cache reuse, chunked prefill bookkeeping).
 
-        Example (Mistral-style single image)::
-
-            prompt = ... [IMG][IMG][IMG_BREAK][IMG][IMG][IMG_END] ...
-            get_mm_token_ids() returns {IMG}                       -> 3 spans (wrong)
-            get_mm_token_ids() returns {IMG, IMG_BREAK, IMG_END}   -> 1 span  (right)
-
-        This contract governs intra-unit layout only. Inter-unit layout (multiple
-        logical units at disjoint positions in the same prompt, or a logical unit
-        split across prefill chunk boundaries) is handled downstream by
-        ``MultimodalRuntimeData`` and the chunked-prefill paths, not here.
-
         Resolution: ``self.processor.mm_token_ids`` when the HF processor
         exposes that attribute; ``None`` otherwise. Subclass overrides
         should return a 1-D tensor of int64 token ids.

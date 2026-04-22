@@ -279,9 +279,7 @@ def test_ad_engine_chunked_prefill_stages_multimodal_runtime_metadata():
     req.multimodal_lengths = [4]
     # Flat prompt-length mask: text at [0,1,6,7], embeds at [2..5].
     req.py_multimodal_data = {
-        "multimodal_embed_mask":
-        torch.tensor(
-            [False, False, True, True, True, True, False, False]),
+        "multimodal_embed_mask": torch.tensor([False, False, True, True, True, True, False, False]),
     }
 
     scheduled_requests = ScheduledRequests()
@@ -383,9 +381,7 @@ def test_ad_engine_stages_mm_chunk_bounds_for_multimodal_block_reuse():
     req.multimodal_lengths = [4]
     # 4-slot unit at positions 2..5, no inline specials.
     req.py_multimodal_data = {
-        "multimodal_embed_mask":
-        torch.tensor(
-            [False, False, True, True, True, True, False, False]),
+        "multimodal_embed_mask": torch.tensor([False, False, True, True, True, True, False, False]),
     }
 
     scheduled_requests = ScheduledRequests()
@@ -407,11 +403,12 @@ def test_ad_engine_stages_mm_chunk_bounds_for_multimodal_block_reuse():
 
 
 def test_ad_engine_stages_mm_chunk_embed_mask_from_mask_field():
-    """When req.py_multimodal_data carries multimodal_embed_mask (per-unit bool
+    """Stage chunk-sliced flat embed mask as extra_args tensor.
+
+    When req.py_multimodal_data carries multimodal_embed_mask (per-unit bool
     masks), _store_prefill_multimodal_metadata emits the chunk-sliced flat
     embed mask as an extra_args tensor so the exported VLM wrapper can consume
     it without reconstructing from spans+offsets.
-
     """
     device = torch.device("cuda")
     max_seq_len = 64
@@ -444,9 +441,9 @@ def test_ad_engine_stages_mm_chunk_embed_mask_from_mask_field():
     req.multimodal_positions = [2]
     req.multimodal_lengths = [4]
     req.py_multimodal_data = {
-        "multimodal_embed_mask":
-        torch.tensor(
-            [False, False, True, True, False, True, False, False]),
+        "multimodal_embed_mask": torch.tensor(
+            [False, False, True, True, False, True, False, False]
+        ),
         "special_token_offsets": [2],
     }
 
@@ -490,10 +487,12 @@ def test_ad_engine_stages_mm_chunk_embed_mask_from_mask_field():
 
 
 def test_ad_engine_mm_special_offsets_for_non_contiguous_unit():
-    """Non-contiguous unit: mm_special_offsets must be the pre-computed
-    indices into the MM-token list, not derived from flat_mask[pos:pos+len]
-    (which would be wrong because multimodal_lengths is an MM-token count,
-    not an outer-box span)."""
+    """Non-contiguous unit: use pre-computed mm_special_offsets.
+
+    Must be the pre-computed indices into the MM-token list, not derived from
+    flat_mask[pos:pos+len] (which would be wrong because multimodal_lengths is
+    an MM-token count, not an outer-box span).
+    """
     device = torch.device("cuda")
     max_seq_len = 64
     max_batch_size = 8
@@ -524,11 +523,9 @@ def test_ad_engine_mm_special_offsets_for_non_contiguous_unit():
     req.multimodal_positions = [2]
     req.multimodal_lengths = [5]
     req.py_multimodal_data = {
-        "multimodal_embed_mask":
-        torch.tensor([
-            False, False, True, True, False, False, False, True, True, False,
-            False, False
-        ]),
+        "multimodal_embed_mask": torch.tensor(
+            [False, False, True, True, False, False, False, True, True, False, False, False]
+        ),
         "special_token_offsets": [2],
     }
 

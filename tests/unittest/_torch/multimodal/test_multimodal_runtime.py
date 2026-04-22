@@ -1,7 +1,6 @@
 from typing import List
 from unittest.mock import Mock
 
-import numpy as np
 import pytest
 import torch
 
@@ -776,8 +775,7 @@ class TestComputeMmEmbedMaskIfAbsent:
         compute_mm_embed_mask_if_absent([1, 100, 101, 2, 102], extra,
                                         _MockProcessor(vocab_size=100))
         mask = extra["multimodal_data"]["multimodal_embed_mask"]
-        assert torch.equal(
-            mask, torch.tensor([False, True, True, False, True]))
+        assert torch.equal(mask, torch.tensor([False, True, True, False, True]))
 
     def test_no_mm_tokens_stores_all_false(self):
         """When no MM tokens match, stores an all-False flat mask."""
@@ -796,8 +794,8 @@ class TestComputeMmEmbedMaskIfAbsent:
         # input: [1, 50, 60, 50, 2] → mm at positions 1,3; special at 2.
         compute_mm_embed_mask_if_absent([1, 50, 60, 50, 2], extra, proc)
         mask = extra["multimodal_data"]["multimodal_embed_mask"]
-        assert torch.equal(
-            mask, torch.tensor([False, True, False, True, False]))
+        assert torch.equal(mask, torch.tensor([False, True, False, True,
+                                               False]))
 
     def test_no_vocab_and_no_mm_ids_is_noop(self):
         """When processor provides neither vocab_size nor mm_token_ids, no crash."""
