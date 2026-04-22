@@ -288,7 +288,6 @@ def filter_mm_token_from_input_ids(
     input_ids: torch.IntTensor,
     vocab_size: int,
     mm_token_ids: Optional[torch.IntTensor] = None,
-    mm_special_token_ids: Optional[torch.IntTensor] = None,
 ) -> Tuple[torch.IntTensor, torch.IntTensor]:
     """
     Filter multimodal tokens from input_ids.
@@ -296,12 +295,6 @@ def filter_mm_token_from_input_ids(
         input_ids: shape [text_total_length + mm_total_length].
         vocab_size: size of the model's vocabulary
         mm_token_ids: possible token ids for multimodal tokens, if known. If not known and set to None, it is assumed that the multimodal tokens are out-of-vocabulary tokens i.e. the `input_ids` contains tokens >= vocab_size that represent the multimodal tokens.
-        mm_special_token_ids: token ids for inline MM specials (e.g. Mistral's
-            image_break, image_end). When provided, these are subtracted from
-            the MM mask so they receive text embeddings rather than being
-            counted as vision-encoder rows. Lets callers pass
-            ``mm_token_ids`` that includes specials without breaking the
-            embed-row count invariant.
     Note:
         This function involves host-device synchronization due to torch.where() (= torch.nonzero) requiring
         host allocation. The output indices reside on the same device as input_ids.
@@ -310,24 +303,13 @@ def filter_mm_token_from_input_ids(
         mm_token_indices: indices of multimodal tokens in the input_ids
     """
     if mm_token_ids is None:
-        # NOTE:
-        # If mm_token_ids is None, it is assumed that the multimodal
-        # tokens are out-of-vocab tokens i.e. the `input_ids` contains
-        # tokens >= vocab_size that represent the multimodal tokens.
-        # Since mm_token_ids can be unbounded in this case,
-        # using torch.isin() may not be performant.
-        # This provides a more performant alternative while keeping
-        # the flexibility of still specifying all possible mm_token_ids,
-        # if the user wants to.
+        # If mm_token_ids is None, assume the multimodal tokens are out-of-vocab
+        # (input_ids >= vocab_size). Avoids torch.isin() over a potentially
+        # unbounded mm_token_ids set.
         mm_token_mask = input_ids >= vocab_size
     else:
         mm_token_ids = mm_token_ids.to(input_ids.device, dtype=input_ids.dtype)
         mm_token_mask = torch.isin(input_ids, mm_token_ids)
-    if mm_special_token_ids is not None:
-        mm_special_token_ids = mm_special_token_ids.to(input_ids.device,
-                                                       dtype=input_ids.dtype)
-        mm_token_mask = mm_token_mask & ~torch.isin(input_ids,
-                                                    mm_special_token_ids)
     # NOTE: torch.where() enforces a host sync
     text_token_indices = torch.where(~mm_token_mask)[0]
     mm_token_indices = torch.where(mm_token_mask)[0]
@@ -339,7 +321,6 @@ def fuse_input_embeds(
     input_ids: torch.IntTensor,
     mm_embeds: List[torch.Tensor],
     mm_token_ids: Optional[torch.IntTensor] = None,
-    mm_special_token_ids: Optional[torch.IntTensor] = None,
     text_token_indices: Optional[torch.IntTensor] = None,
     mm_token_indices: Optional[torch.IntTensor] = None,
     extra_embeds: Optional[List[torch.Tensor]] = None,
@@ -376,8 +357,7 @@ def fuse_input_embeds(
         text_token_indices, mm_token_indices = filter_mm_token_from_input_ids(
             input_ids,
             vocab_size=embedding_layer.num_embeddings,
-            mm_token_ids=mm_token_ids,
-            mm_special_token_ids=mm_special_token_ids)
+            mm_token_ids=mm_token_ids)
     if mm_token_indices.shape[0] != mm_embed.shape[0]:
         raise ValueError(
             f"Multimodal token count mismatch: found {len(mm_token_indices)} image tokens in input_ids "
