@@ -380,17 +380,19 @@ def fuse_input_embeds(
 
     if text_token_indices is None or mm_token_indices is None:
         # Prefer the intake-authored flat embed mask (specials-subtracted).
-        # model_engine attaches a MultimodalRuntimeData to every context
-        # request (zeros cumsum for text-only contexts), so the mask path
-        # covers mixed MM+text context batches without touching the
-        # token-ID predicate:
-        #   - mask + runtime        -> mask[past:end]      (MM context)
-        #   - no mask + runtime     -> zeros(end-past)     (text-only context)
-        #   - no mask + no runtime  -> zeros(1)            (generation token)
-        # Fallback only when the synthesis doesn't cover input_ids.shape[0]
-        # (e.g. speculative decoding with multi-token gen). The defensive
-        # mm_special_token_ids subtraction keeps the fallback correct even
-        # if a caller's mm_token_ids includes inline specials.
+        # Synthesis rules (per multimodal_params entry, kwargs-forwarded):
+        #   - mask + runtime        -> mask[past:end]   (MM context chunk)
+        #   - no mask + runtime     -> zeros(end-past)  (unusual; safety)
+        #   - no mask + no runtime  -> zeros(1)         (generation token)
+        # Mixed MM+text CONTEXT batches still fall back: text-only context
+        # requests don't get a MultimodalParams entry (filtered by
+        # has_content() upstream to protect downstream VLM consumers that
+        # index multimodal_data["..."] directly), so the synthesis can't
+        # cover them. The fallback is kept correct by (a) the defensive
+        # mm_special_token_ids subtraction, and (b) the in-tree convention
+        # that every VLM passes visual-only mm_token_ids at the call site
+        # (e.g. Mistral's self._image_token_ids excludes image_break and
+        # image_end — see modeling_mistral.py).
         multimodal_params = kwargs.get("multimodal_params") or []
         mask_slices: List[torch.Tensor] = []
         for p in multimodal_params:
