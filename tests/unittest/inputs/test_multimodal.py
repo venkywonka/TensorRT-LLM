@@ -2,7 +2,7 @@
 # Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 """Tests for MultimodalRuntimeData cumsum math and the flat-mask producer."""
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -138,6 +138,40 @@ def test_find_mm_token_lengths_video_fast_path_uses_video_grid_thw():
 
     assert result == {"video": torch.prod(vgt, dim=1).tolist()}
     assert processor.get_num_tokens_per_video.call_count == 3
+
+
+def test_find_mm_token_lengths_video_grid_thw_shape_mismatch_falls_back():
+    """Shape-mismatched video_grid_thw warns and falls back to slow path.
+
+    When video_grid_thw row count does not match the number of videos,
+    the fast path is skipped: the processor is called without the
+    video_grid_thw kwarg and a single warning is emitted.
+    """
+    processor = Mock()
+    processor.get_num_tokens_per_image = Mock(return_value=100)
+
+    def _count_video(*, video, video_grid_thw=None, **kwargs):
+        if video_grid_thw is not None:
+            t, h, w = (int(x) for x in video_grid_thw)
+            return t * h * w
+        return 99  # slow-path sentinel.
+
+    processor.get_num_tokens_per_video = Mock(side_effect=_count_video)
+
+    mm_data = {"video": [_fake_video(), _fake_video()]}
+    # 3 rows, 2 videos -> mismatch triggers fallback + warning.
+    vgt = torch.tensor([[1, 1, 1], [2, 2, 2], [3, 3, 3]])
+    multimodal_data = {"video": {"video_grid_thw": vgt}}
+
+    with patch("tensorrt_llm.inputs.multimodal.logger.warning") as warn_mock:
+        result = find_mm_token_lengths(mm_data, processor, multimodal_data=multimodal_data)
+
+    assert result == {"video": [99, 99]}
+    assert processor.get_num_tokens_per_video.call_count == 2
+    for call in processor.get_num_tokens_per_video.call_args_list:
+        assert call.kwargs.get("video_grid_thw") is None
+    warn_mock.assert_called_once()
+    assert "video_grid_thw" in warn_mock.call_args.args[0]
 
 
 def test_find_mm_token_lengths_image_only_request_unaffected():
