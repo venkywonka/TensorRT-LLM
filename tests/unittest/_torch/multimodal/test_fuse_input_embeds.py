@@ -156,10 +156,9 @@ def test_fuse_input_embeds_success_oov_path(device):
                          (["cuda"] if torch.cuda.is_available() else []))
 def test_fuse_input_embeds_empty_multimodal_params_falls_through(device):
     """
-    An empty multimodal_params list (non-None but len 0) must be treated as
-    "no mask path available" and fall through to the vocab-predicate filter,
-    not enter the mask branch (where a vacuous all([]) + empty slices list
-    used to trigger IndexError at `slices[0]`).
+    An empty multimodal_params list (non-None but len 0) passed through kwargs
+    is accepted and ignored; fuse_input_embeds returns a correctly shaped
+    fused tensor.
     """
     hidden = 8
     vocab_size = 40
