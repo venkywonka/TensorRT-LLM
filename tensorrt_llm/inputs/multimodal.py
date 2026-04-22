@@ -644,6 +644,14 @@ def apply_mm_hashes(
                 if isinstance(frame, torch.Tensor):
                     frame = frame.detach().cpu().contiguous()
                 hasher.update(serialize_item(frame))
+            # TODO(TRTLLM-12297): also fold metadata["audio_samples"] /
+            # metadata["audio_sample_rate"] into the hash when present.
+            # extract_audio=true makes audio affect token counts and
+            # embeddings (see modeling_nemotron_nano.py
+            # _expand_video_placeholders_in_token_ids and
+            # get_num_tokens_per_video), but two videos with identical
+            # frames and different audio currently share the same MM hash —
+            # KV-cache reuse can return stale audio-conditioned states.
         else:
             hasher.update(serialize_item(item))
 
@@ -780,11 +788,15 @@ def find_mm_token_lengths(mm_data: Dict[str, Any],
                     image=item, )
                 modality_token_lengths.append(num_tokens)
             elif modality == "video":
+                video_metadata = None
                 if isinstance(item, tensorrt_llm.inputs.utils.VideoData):
+                    video_metadata = item.metadata
                     item = item.frames
                 assert isinstance(item, list), "Video must be a list of frames"
                 num_tokens = input_processor.get_num_tokens_per_video(
-                    video=item, )
+                    video=item,
+                    video_metadata=video_metadata,
+                )
                 modality_token_lengths.append(num_tokens)
             elif modality == "audio":
                 num_tokens = input_processor.get_num_tokens_per_audio(
@@ -864,7 +876,9 @@ def find_mm_token_positions(
 
     # If no multimodal tokens found, return empty list
     if not torch.any(mm_mask):
-        return []
+        # Preserve the declared 2-tuple return type so callers can unpack
+        # unconditionally (e.g. `start_positions, special_positions = ...`).
+        return [], []
 
     # Get positions of all multimodal tokens
     mm_positions = torch.where(mm_mask)[0].tolist()
