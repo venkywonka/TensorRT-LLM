@@ -250,13 +250,11 @@ def find_input_mm_embeds(
         # No slicing, return the full mm_embeds
         return mm_embeds
 
-    # Total embeds in the current chunk, across all requests.
     total_mm_tokens = sum(param.multimodal_runtime.num_mm_tokens_in_chunk
                           for param in multimodal_params
                           if param.multimodal_runtime is not None)
 
     if total_mm_tokens == 0:
-        # Nothing in current chunk — skip vision encoder forward.
         logger.debug(
             "All multimodal tokens are cached or beyond current chunk, skipping vision encoder forward"
         )
