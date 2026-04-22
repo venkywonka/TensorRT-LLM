@@ -555,7 +555,7 @@ def apply_mm_hashes(
     mm_uuids: Optional[Dict[str, List[Optional[str]]]] = None,
     hash_lib=default_hasher
 ) -> Tuple[Dict[str, List[str]], Optional[List[Optional[str]]]]:
-    """Apply hashing to multimodal data items, combining UUID with content when provided.
+    """Apply hashing to multimodal data, one hash per logical multimodal unit.
 
     When a UUID is provided for an item, the hash is computed from both the UUID
     and the content together: BLAKE3(UUID || Content). This ensures:
@@ -858,7 +858,7 @@ def require_mm_embed_mask_if_needed(
 
 
 def _as_tensor(
-    input_ids: Union[torch.Tensor, List[int], np.ndarray], ) -> torch.Tensor:
+        input_ids: Union[torch.Tensor, List[int], np.ndarray]) -> torch.Tensor:
     """Coerce input_ids to a torch.Tensor without copying when possible.
 
     Does NOT reshape to 1D or cast to long — callers are responsible for
@@ -889,6 +889,11 @@ def _compute_mm_masks(
 
     At least one of ``vocab_size`` or ``mm_token_ids`` must be provided; if
     both, ``mm_token_ids`` takes precedence (matching legacy behavior).
+
+    Example: ``input_ids=[1, 5, 5, 6, 5, 7, 2]``,
+    ``mm_token_ids=[5]``, ``mm_special_token_ids=[6, 7]`` gives
+    ``embed_mask=[F, T, T, F, T, F, F]`` and
+    ``mm_mask=[F, T, T, T, T, T, F]``.
 
     Each call performs at most two full-sequence ``isin`` scans — one for
     regular MM tokens and one for specials — and reuses them to derive all
@@ -943,6 +948,10 @@ def _find_mm_token_start_pos_from_masks(
     Returns:
         start_positions: Indices where each logical MM unit starts.
         start_special_token_positions: Indices (within MM tokens) of special tokens.
+
+    Example: if MM prompt positions are ``[1, 2, 3, 4, 5]`` and prompt
+    positions ``[3, 5]`` are special, returns ``start_positions=[1]`` and
+    ``start_special_token_positions=[2, 4]``.
     """
     if not torch.any(mm_mask):
         return [], []

@@ -238,22 +238,13 @@ class BaseMultimodalInputProcessor(ABC):
         return None
 
     def get_mm_token_ids(self) -> Optional[Tensor]:
-        """Return the set of token IDs that belong to a logical multimodal unit.
+        """Token IDs for a logical multimodal unit; include framing tokens for one contiguous span per unit.
 
-        The returned IDs are used as an inclusion mask by the embed-mask
-        producer (``compute_mm_embed_mask_if_absent`` /
-        ``_compute_mm_masks``) to classify each prompt position as
-        embed vs non-embed. Include every token the model uses to represent
-        a logical unit — placeholders AND any in-prompt framing tokens
-        (e.g. ``image_break``, ``image_end``) that sit between placeholders —
-        so that one image/video produces one outer-box span.
-
-        Omitting framing IDs will break downstream per-unit accounting
-        (hashing, KV-cache reuse, chunked prefill bookkeeping).
-
-        Resolution: ``self.processor.mm_token_ids`` when the HF processor
-        exposes that attribute; ``None`` otherwise. Subclass overrides
-        should return a 1-D tensor of int64 token ids.
+        Framing tokens must also be in ``get_mm_special_token_ids``. Example (Mistral):
+        ``[IMG][IMG][IMG_BREAK][IMG][IMG][IMG_END]`` → ``{IMG, IMG_BREAK, IMG_END}``
+        = 1 span; ``{IMG}`` alone fragments into 3.
+        Return value is a 1-D tensor of token IDs; these are token values, not
+        prompt positions or per-image counts.
         """
         if hasattr(self.processor, "mm_token_ids"):
             return self.processor.mm_token_ids
@@ -265,13 +256,13 @@ class BaseMultimodalInputProcessor(ABC):
         return None
 
     def get_mm_special_token_ids(self) -> Optional[Tensor]:
-        """
-        Return multimodal special token IDs if available; otherwise None.
+        """IDs for in-prompt framing tokens inside a multimodal unit that carry no vision embedding.
 
-        Special tokens refer to multimodal-related tokens (e.g. <image_end>, <image_break>) that are not part
-        of the ViT output but come from text embeddings. Some VLMs
-        (e.g., Mistral3, LLaMA4) mix special tokens with multimodal tokens,
-        so they need to be returned separately.
+        Found in e.g. Mistral3/LLaMA4 (``image_break``, ``image_end``). Example: for
+        ``[IMG][IMG][IMG_BREAK][IMG][IMG][IMG_END]`` return ``{IMG_BREAK, IMG_END}``
+        — subtracted from the embed mask so embed-slot count stays accurate.
+        Return value is a 1-D tensor of token IDs; these tokens are excluded
+        from the embedding-row mask.
         """
         return getattr(self.processor, "mm_special_token_ids", None)
 
@@ -299,6 +290,8 @@ class BaseMultimodalInputProcessor(ABC):
 
         This (default) method delegates to the Hugging Face processor's '_get_num_multimodal_tokens' method.
         Returns the token count for the given image.
+        Example: for Mistral, this count includes IMG placeholders plus row
+        break/end framing tokens, matching the prompt-side logical MM unit.
 
         Subclasses can override this method to provide custom logic to calculate the number of tokens.
         """
@@ -319,6 +312,8 @@ class BaseMultimodalInputProcessor(ABC):
 
         This (default) method delegates to the Hugging Face processor's '_get_num_multimodal_tokens' method.
         Returns the token count for the given video.
+        Example: for a video item, return the prompt-side token count for that
+        one video unit, not the number of video frames.
 
         Subclasses can override this method to provide custom logic to calculate the number of tokens.
         """

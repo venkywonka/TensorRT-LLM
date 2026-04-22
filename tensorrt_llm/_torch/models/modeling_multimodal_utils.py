@@ -237,6 +237,8 @@ def find_input_mm_embeds(
         - Supports both individual batching (len(mm_embeds) == len(multimodal_params))
           and pre-concatenated batching (len(mm_embeds) == 1)
         - Handles chunked prefill by considering chunk boundaries and current chunk tokens
+        - Example: if a request has 8 MM embed rows, 2 cached rows, and 3 rows
+          in the current chunk, this keeps rows [2:5].
     """
     # Current support two batching modes:
     # 1. Pre-concatenated mm_embeds for each batch, i.e., len(mm_embeds) == 1
@@ -294,6 +296,9 @@ def filter_mm_token_from_input_ids(
         vocab_size: size of the model's vocabulary
         mm_token_ids: possible token ids for multimodal tokens, if known. If not known and set to None, it is assumed that the multimodal tokens are out-of-vocabulary tokens i.e. the `input_ids` contains tokens >= vocab_size that represent the multimodal tokens.
     Note:
+        Example: input_ids=[1, 55, 2, 101], vocab_size=100, and
+        mm_token_ids=[55] returns mm_token_indices=[1]; token 101 is text
+        because explicit mm_token_ids overrides the OOV fallback.
         This function involves host-device synchronization due to torch.where() (= torch.nonzero) requiring
         host allocation. The output indices reside on the same device as input_ids.
     Returns:
@@ -340,9 +345,11 @@ def fuse_input_embeds(
         - If (1) JIT test run, (2) non-multimodal run, i.e. all text-only requests, either context or generation phase (3) multimodal run, all requests in generation phase --> there is no multimodal data, return only the input_ids
         - If (4) multimodal run, mixed batch of context and generation requests, each context request has a multimodal feature --> return only the fused input_embeds of shape [total length, hidden_dim]. For text tokens, LLM embedding layer has already run.
     Note:
-        This function may involve host-device synchronization if indices are not
-        provided and filtering is performed. See filter_mm_token_from_input_ids
-        for details.
+        - Precedence: If kwargs provide indices (text_token_indices and mm_token_indices), those are used. If any one of them is not provided, fallback to filtering method. Sentinel-/OOV-based filtering (e.g., tokens >= vocab_size) is used only when neither index tensor and mm_token_ids is provided.
+        - Example: len(torch.cat(mm_embeds)) must match len(mm_token_indices);
+          for chunked prefill, pass only the current chunk's mm_embeds or
+          explicit indices for the active MM token positions.
+        - This function may involve host-device synchronization if indices are not provided and filtering is performed. See filter_mm_token_from_input_ids for details.
     """
     if len(mm_embeds) == 0:
         if extra_embeds is not None and len(extra_embeds) > 0:

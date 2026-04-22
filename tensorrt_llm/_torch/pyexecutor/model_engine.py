@@ -2327,11 +2327,11 @@ class PyTorchModelEngine(ModelEngine):
                 multimodal_runtime=py_multimodal_runtime)
             if multimodal_params.has_content():
                 if self.use_mrope:
-                    ctx_mrope_position_ids = multimodal_params.multimodal_data[
-                        'mrope_config'][
-                            'mrope_position_ids'][:, :,
-                                                  begin_compute:begin_compute +
-                                                  len(prompt_tokens)]
+                    mrope_pos_ids = multimodal_params.multimodal_data[
+                        'mrope_config']['mrope_position_ids']
+                    ctx_mrope_position_ids = mrope_pos_ids[:, :, begin_compute:
+                                                           begin_compute +
+                                                           len(prompt_tokens)]
                     # Record as (start_idx, end_idx, (3,1,L) mrope_pos_ids)
                     mrope_position_ids.append(
                         (len(position_ids) - len(prompt_tokens),

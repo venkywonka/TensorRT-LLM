@@ -613,8 +613,6 @@ class ADEngine(ModelEngine):
         flat_start_list: List[int] = []
         count_list: List[int] = []
         cumsum_total_mm = 0
-        mm_chunk_embed_mask_slices: List[torch.Tensor] = []
-        mm_chunk_embed_mask_cu_seqlen: List[int] = [0]
 
         for i, req in enumerate(prefill_requests):
             begin_compute = input_pos[i]
@@ -662,16 +660,6 @@ class ADEngine(ModelEngine):
             )
             mm_special_offsets_flat.extend(special_offsets)
 
-            chunk_len = end_compute - begin_compute
-            if flat_mask is not None and chunk_len > 0:
-                mm_chunk_embed_mask_slices.append(
-                    flat_mask[begin_compute:end_compute].to(dtype=torch.bool, device="cpu")
-                )
-                mm_chunk_embed_mask_cu_seqlen.append(mm_chunk_embed_mask_cu_seqlen[-1] + chunk_len)
-            else:
-                # 0-length marker keeps cu_seqlen aligned with request order.
-                mm_chunk_embed_mask_cu_seqlen.append(mm_chunk_embed_mask_cu_seqlen[-1])
-
             if not mm_pos or not mm_len:
                 flat_start_list.append(0)
                 count_list.append(0)
@@ -717,21 +705,6 @@ class ADEngine(ModelEngine):
         extra_args["mm_special_offsets"] = [
             torch.tensor(mm_special_offsets_flat, dtype=torch.int32, device="cpu")
         ]
-        # cu_seqlen has N+1 entries (0-indexed running sum) so downstream
-        # consumers can split the flat mask into per-request slices.
-        if any(
-            req.py_multimodal_data and "multimodal_embed_mask" in req.py_multimodal_data
-            for req in prefill_requests
-        ):
-            mm_chunk_embed_mask = (
-                torch.cat(mm_chunk_embed_mask_slices)
-                if mm_chunk_embed_mask_slices
-                else torch.empty(0, dtype=torch.bool, device="cpu")
-            )
-            extra_args["mm_chunk_embed_mask"] = [mm_chunk_embed_mask]
-            extra_args["mm_chunk_embed_mask_cu_seqlen"] = [
-                torch.tensor(mm_chunk_embed_mask_cu_seqlen, dtype=torch.int32, device="cpu")
-            ]
         # Export multimodal slice bounds whenever the current prefill step only needs a
         # subset of the request's multimodal embeddings. This is required for regular
         # chunked prefill, but also for KV-cache reuse where begin_compute > 0 even when
