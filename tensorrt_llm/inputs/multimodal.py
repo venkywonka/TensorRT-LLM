@@ -54,7 +54,7 @@ class MultimodalInput:
     """
 
     multimodal_uuids: Optional[List[Optional[str]]] = None
-    """Optional user-provided UUIDs for logical multimodal units.
+    """Optional user-provided UUIDs for multimodal data items.
 
     When provided, these UUIDs will be returned in KV cache events instead of the
     computed hash hex string. This enables deterministic cache identification across
@@ -62,7 +62,7 @@ class MultimodalInput:
 
     Each element can be:
     - A string UUID: Used as the cache identifier (returned in events)
-    - None: Falls back to content-based hashing for that unit
+    - None: Falls back to content-based hashing for that item
 
     If the UUID string is longer than 32 bytes, it will be hashed internally
     for cache key computation, but the original UUID string is preserved and
@@ -549,9 +549,9 @@ def apply_mm_hashes(
     mm_uuids: Optional[Dict[str, List[Optional[str]]]] = None,
     hash_lib=default_hasher
 ) -> Tuple[Dict[str, List[str]], Optional[List[Optional[str]]]]:
-    """Apply hashing to multimodal data, one hash per logical multimodal unit.
+    """Apply hashing to multimodal data items, combining UUID with content when provided.
 
-    When a UUID is provided for a unit, the hash is computed from both the UUID
+    When a UUID is provided for an item, the hash is computed from both the UUID
     and the content together: BLAKE3(UUID || Content). This ensures:
     - Cache correctness: Different content always produces different hashes
     - User isolation: Same content with different UUIDs produces different hashes
@@ -560,13 +560,13 @@ def apply_mm_hashes(
     Args:
         mm_data: Dictionary of modality -> data items
         mm_uuids: Optional dictionary of modality -> list of UUID strings.
-                  Use None for units that should use content-based hashing only.
+                  Use None for items that should use content-based hashing only.
         hash_lib: Hash function to use (default: blake3)
 
     Returns:
         Tuple of:
         - Dictionary of modality -> list of hash hex strings (64 chars each)
-        - Flattened list of original UUID strings (or None for content-hashed units)
+        - Flattened list of original UUID strings (or None for content-hashed items)
     """
 
     def _hash_content(hasher, item):
