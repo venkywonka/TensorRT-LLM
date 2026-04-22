@@ -1092,7 +1092,7 @@ class Qwen3VLModelBase(PreTrainedModel):
             f"num_context_requests: {num_context_requests}, num_generation_requests: {num_generation_requests}"
         )
 
-        multimodal_params = kwargs.pop("multimodal_params", [])
+        multimodal_params = kwargs.get("multimodal_params", [])
         mm_embeds = []
         mrope_config = {}
         deepstack_embeds = []
@@ -1129,7 +1129,6 @@ class Qwen3VLModelBase(PreTrainedModel):
             input_ids,
             mm_embeds,
             extra_embeds=deepstack_embeds,
-            multimodal_params=mm_multimodal_params,
             **kwargs,
         )
         if len(deepstack_embeds) > 0:

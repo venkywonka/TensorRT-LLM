@@ -684,27 +684,22 @@ class LlavaNextModel(PreTrainedModel):
         num_context_requests, num_generation_requests = attn_metadata.num_contexts, attn_metadata.num_generations
         logger.debug(f"{num_context_requests=}, {num_generation_requests=}")
 
-        multimodal_params = kwargs.pop("multimodal_params", [])
+        multimodal_params = kwargs.get("multimodal_params", [])
         mm_embeds = []
-        mm_params_for_fuse = None
         if len(multimodal_params) > 0:
-            mm_params_for_fuse = multimodal_params[:num_context_requests]
             if not DISAGG:
                 mm_embeds = get_multimodal_embeddings(
                     encoder_forward_fn=self.mm_encoder.forward,
-                    multimodal_params=mm_params_for_fuse)
+                    multimodal_params=multimodal_params[:num_context_requests])
             else:
                 raise NotImplementedError(
                     "LlavaNextModel does not support disaggregated inference yet. Please unset "
                     f"the TLLM_MULTIMODAL_DISAGGREGATED environment variable, or set it to '0'."
                 )
-            mm_embeds = find_input_mm_embeds(mm_embeds, mm_params_for_fuse)
+            mm_embeds = find_input_mm_embeds(
+                mm_embeds, multimodal_params[:num_context_requests])
         input_ids, inputs_embeds = fuse_input_embeds(
-            self.llm.model.embed_tokens,
-            input_ids,
-            mm_embeds,
-            multimodal_params=mm_params_for_fuse,
-            **kwargs)
+            self.llm.model.embed_tokens, input_ids, mm_embeds, **kwargs)
         logits = self.llm.forward(attn_metadata, input_ids, position_ids,
                                   inputs_embeds, return_context_logits)
         return logits

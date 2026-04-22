@@ -3,7 +3,6 @@
 """Multimodal utilities for handling images and other media types in TensorRT-LLM."""
 
 from dataclasses import dataclass, field
-from functools import cached_property
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -24,21 +23,35 @@ default_hasher = blake3
 class MultimodalInput:
     """Per-logical-unit multimodal metadata for KV-cache hashing (C++ layer).
 
-    Indexed per logical unit (one image, one video). Which positions inside
-    each unit's outer bounding box actually consume encoder rows (vs. inline
-    specials or interleaved text) is described by ``multimodal_embed_mask``.
+    Indexed per logical unit (one image, one video). The per-position embed/
+    non-embed decision is carried as a flat bool tensor in
+    ``py_multimodal_data["multimodal_embed_mask"]`` on the request, not here.
     """
 
     multimodal_hashes: List[List[int]]
     """Hash digest per logical unit (list of 8 int32 each)."""
 
     multimodal_positions: List[int]
-    """Starting token position of each logical unit's outer bounding box."""
+    """Prompt position of each logical unit's first MM token."""
 
     multimodal_lengths: List[int]
-    """Length of each unit's outer bounding box (embed slots + any inline
-    specials or non-mm tokens that live inside it). The per-position embed/
-    non-embed decision is in ``multimodal_embed_mask``."""
+    """Per-unit MM-token count = encoder-row count for that unit. Does NOT
+    include interleaved non-MM text, so this is not a bounding-box span when
+    a unit's MM tokens are non-contiguous.
+
+    This dual-role field is consumed by (a) Python encoder-row splitters
+    (``llm_request.allocate_multimodal_embedding_handles``, ``sampler``,
+    ``model_engine._forward_step_for_mm_encoder_only``) which need the
+    MM-token/encoder-row count, and (b) the C++ KV-cache key hasher
+    (``cpp/tensorrt_llm/batch_manager/blockKey.cpp``) which treats
+    ``startPos + length`` as an outer bounding-box and checks block overlap
+    against it. Those two semantics only agree when a logical unit's MM
+    tokens are contiguous. For non-contiguous units, KV-cache block keys
+    can under-cover the tail of the unit (pre-existing latent limitation,
+    unchanged by the embed-mask refactor). Resolving this requires either
+    adding a separate ``multimodal_outer_lengths`` field fed to the C++
+    binding, or teaching the C++ hasher to read the flat embed mask.
+    """
 
     multimodal_uuids: Optional[List[Optional[str]]] = None
     """Optional user-provided UUIDs for logical multimodal units.
@@ -54,12 +67,6 @@ class MultimodalInput:
     If the UUID string is longer than 32 bytes, it will be hashed internally
     for cache key computation, but the original UUID string is preserved and
     returned in KV cache events.
-    """
-
-    multimodal_embed_mask: Optional[List[Optional[torch.Tensor]]] = None
-    """Per-logical-unit bool mask over outer-box positions. None iff not yet
-    materialized; each entry None iff unit has no inline specials. Python-only —
-    NOT forwarded to the C++ tle::MultimodalInput.
     """
 
     def __post_init__(self):
@@ -128,105 +135,20 @@ class MultimodalInput:
             torch.tensor(self.multimodal_positions, dtype=torch.int32),
             torch.tensor(self.multimodal_lengths, dtype=torch.int32))
 
-    def materialize_embed_mask(
-        self,
-        prompt_token_ids: torch.Tensor,
-        vocab_size: int,
-        mm_token_ids: Optional[torch.Tensor] = None,
-        mm_special_token_ids: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """Idempotent materialization of embed_mask_flat.
-
-        Source order (highest priority first):
-          1. self.multimodal_embed_mask if populated -> stitch into flat.
-          2. mm_token_ids if available -> isin(prompt, mm_token_ids), then
-             subtract specials when declared.
-          3. vocab_size fallback -> prompt >= vocab_size, then subtract specials.
-        """
-        if self.__dict__.get("_embed_mask_flat") is not None:
-            return self.__dict__["_embed_mask_flat"]
-
-        if not isinstance(prompt_token_ids, torch.Tensor):
-            prompt_token_ids = torch.as_tensor(prompt_token_ids)
-
-        if self.multimodal_embed_mask is not None:
-            mask = torch.zeros(prompt_token_ids.shape[0],
-                               dtype=torch.bool,
-                               device=prompt_token_ids.device)
-            for i, per_unit in enumerate(self.multimodal_embed_mask):
-                pos = self.multimodal_positions[i]
-                length = self.multimodal_lengths[i]
-                if per_unit is None:
-                    mask[pos:pos + length] = True
-                else:
-                    per_unit = per_unit.to(device=prompt_token_ids.device,
-                                           dtype=torch.bool)
-                    mask[pos:pos + length] = per_unit
-            return self._store_embed_mask_flat(mask)
-
-        if mm_token_ids is not None:
-            mm_token_ids = mm_token_ids.to(device=prompt_token_ids.device,
-                                           dtype=prompt_token_ids.dtype)
-            mask = torch.isin(prompt_token_ids, mm_token_ids)
-        else:
-            mask = prompt_token_ids >= vocab_size
-
-        if mm_special_token_ids is not None:
-            mm_special_token_ids = mm_special_token_ids.to(
-                device=prompt_token_ids.device, dtype=prompt_token_ids.dtype)
-            mask = mask & ~torch.isin(prompt_token_ids, mm_special_token_ids)
-
-        return self._store_embed_mask_flat(mask)
-
-    def _store_embed_mask_flat(self, mask: torch.Tensor) -> torch.Tensor:
-        # Invalidate any stale @cached_property values populated before the
-        # mask was materialized; without the pops they would pin None.
-        self.__dict__["_embed_mask_flat"] = mask
-        self.__dict__.pop("embed_mask_flat", None)
-        self.__dict__.pop("embed_mask_cumsum", None)
-        return mask
-
-    @cached_property
-    def embed_mask_flat(self) -> Optional[torch.Tensor]:
-        """Return the cached bool[request_seq_len] mask, or None if not materialized."""
-        return self.__dict__.get("_embed_mask_flat")
-
-    @cached_property
-    def embed_mask_cumsum(self) -> Optional[torch.Tensor]:
-        """Return int64 prefix sum of embed_mask_flat, or None when mask is absent.
-
-        Enables O(1) range queries via get_chunk_embed_indices.
-        """
-        if self.embed_mask_flat is None:
-            return None
-        return self.embed_mask_flat.to(dtype=torch.int64).cumsum(0)
-
-    def get_chunk_embed_indices(self, chunk_start: int,
-                                chunk_end: int) -> Tuple[int, int]:
-        """Translate [chunk_start, chunk_end) to [enc_lo, enc_hi) via cumsum.
-
-        Input positions are in the full prompt; output positions are row
-        indices into the encoder output tensor.
-        """
-        cs = self.embed_mask_cumsum
-        enc_lo = int(cs[chunk_start - 1]) if chunk_start > 0 else 0
-        enc_hi = int(cs[chunk_end - 1]) if chunk_end > 0 else 0
-        return enc_lo, enc_hi
-
 
 @dataclass
 class MultimodalRuntimeData:
     """Runtime data for tracking multimodal embed caching and reuse per request sequence.
 
-    Constructed from the per-request embed_mask_cumsum produced by the
-    MultimodalInput intake layer; counts are derived via three O(1) cumsum
-    lookups. Supports embed positions that are non-contiguous within a logical
-    unit (inline specials, interleaved text) natively.
+    Constructed from the per-request int64 cumsum of ``py_multimodal_data
+    ["multimodal_embed_mask"]``; counts are derived via three O(1) cumsum
+    lookups. Handles non-contiguous embed positions (inline specials,
+    interleaved text) natively.
 
     Attributes:
         past_seen_token_num: Total tokens already processed in previous iterations (cached)
         chunk_end_pos: End position of the current chunk for chunked prefill
-        embed_mask_cumsum: int64 prefix sum of embed_mask_flat from MultimodalInput
+        embed_mask_cumsum: int64 prefix sum of the flat embed mask
 
         num_cached_mm_tokens: Number of embeds already cached (computed)
         num_mm_tokens_in_chunk: Number of embeds in the current chunk (computed)
@@ -929,33 +851,32 @@ def require_mm_embed_mask_if_needed(
     )
 
 
-def find_contiguous_mm_spans(
+def find_mm_token_positions(
     input_ids: Union[torch.Tensor, List[int], np.ndarray],
+    num_mm_tokens: List[int],
     vocab_size: Optional[int] = None,
     mm_token_ids: Optional[torch.Tensor] = None,
     mm_special_token_ids: Optional[torch.Tensor] = None,
-) -> Tuple[List[Tuple[int, int]], List[int]]:
-    """Scan input_ids for contiguous runs of multimodal tokens.
+) -> Tuple[List[int], List[int]]:
+    """Locate logical-unit starts and special-token offsets in one scan.
 
-    Lightweight alternative to find_mm_token_positions that does not require
-    num_mm_tokens. Suitable for any code path that has token IDs and needs
-    to know where contiguous blocks of MM tokens sit in the sequence.
-
-    At least one of vocab_size or mm_token_ids must be provided.
-    If mm_token_ids is provided, vocab_size is ignored.
+    At least one of ``vocab_size`` or ``mm_token_ids`` must be provided.
+    If ``mm_token_ids`` is provided, ``vocab_size`` is ignored.
 
     Args:
         input_ids: Token sequence (tensor, list, or numpy array).
-        vocab_size: Vocabulary size; tokens >= vocab_size are considered MM.
-        mm_token_ids: Explicit token IDs that represent multimodal tokens.
-        mm_special_token_ids: Token IDs for special MM tokens (e.g. image_break).
+        num_mm_tokens: Per-logical-unit MM-token counts (embed slots plus any
+            inline specials that are themselves MM tokens); one entry per
+            image/video.
+        vocab_size: Vocabulary size; tokens >= vocab_size are MM when
+            ``mm_token_ids`` is not given.
+        mm_token_ids: Explicit MM token IDs.
+        mm_special_token_ids: Special MM token IDs (e.g. image_break).
 
     Returns:
-        A 2-tuple of:
-        - contiguous_spans: List of (start_position, length) for each contiguous
-            run of MM tokens in input_ids.
-        - special_token_offsets: Indices into the flat list of all MM token
-            positions where special tokens occur.
+        start_positions: Prompt position of each logical unit's first MM token.
+        start_special_token_positions: Indices into the flat MM-token list
+            where specials occur.
     """
     if mm_token_ids is None and vocab_size is None:
         raise ValueError(
@@ -966,7 +887,6 @@ def find_contiguous_mm_spans(
             "Both mm_token_ids and vocab_size are provided, using mm_token_ids and ignoring vocab_size"
         )
 
-    # Convert input_ids to tensor if needed
     if not isinstance(input_ids, torch.Tensor):
         if isinstance(input_ids, list):
             input_ids = torch.tensor(input_ids)
@@ -976,7 +896,6 @@ def find_contiguous_mm_spans(
     if input_ids.numel() == 0:
         return [], []
 
-    # Create mask for multimodal tokens including special tokens if provided
     if mm_token_ids is None:
         mm_mask = input_ids >= vocab_size
         if mm_special_token_ids is not None:
@@ -997,137 +916,29 @@ def find_contiguous_mm_spans(
             mm_token_ids = torch.unique(mm_token_ids)
         mm_mask = torch.isin(input_ids, mm_token_ids)
 
-    # If no multimodal tokens found, return empty
     if not torch.any(mm_mask):
         return [], []
 
     mm_positions = torch.where(mm_mask)[0]
 
-    # Identify special token offsets within the flat mm_positions list
-    special_token_offsets: List[int] = []
+    start_special_token_positions: List[int] = []
     if mm_special_token_ids is not None:
-        tokens_at_mm_positions = input_ids[mm_positions]
-        special_mask = torch.isin(tokens_at_mm_positions, mm_special_token_ids)
-        special_token_offsets = torch.where(special_mask)[0].tolist()
+        tokens_at_mm = input_ids[mm_positions]
+        start_special_token_positions = torch.where(
+            torch.isin(tokens_at_mm, mm_special_token_ids))[0].tolist()
 
-    # diffs[i] = mm_positions[i+1] - mm_positions[i]. Where diffs != 1 there is
-    # a gap, so the next contiguous span starts at index (i + 1) in mm_positions
-    # (i.e. gap_indices are indices *into mm_positions*, not 1-based positions).
-    diffs = torch.diff(mm_positions)
-    gap_indices = torch.where(diffs != 1)[0] + 1
-    span_starts_idx = torch.cat([mm_positions.new_zeros(1), gap_indices])
-    span_ends_idx = torch.cat(
-        [gap_indices, mm_positions.new_tensor([len(mm_positions)])])
-    span_starts = mm_positions[span_starts_idx]
-    span_lengths = span_ends_idx - span_starts_idx
-    contiguous_spans = list(
-        zip(span_starts.tolist(), span_lengths.tolist(), strict=True))
-
-    return contiguous_spans, special_token_offsets
-
-
-def compute_per_unit_embed_masks(
-    input_ids: Union[torch.Tensor, List[int], np.ndarray],
-    contiguous_spans: List[Tuple[int, int]],
-    vocab_size: Optional[int] = None,
-    mm_token_ids: Optional[torch.Tensor] = None,
-    mm_special_token_ids: Optional[torch.Tensor] = None,
-) -> List[torch.Tensor]:
-    """Return per-span bool[length] masks with True at embeds, False at specials.
-
-    Companion to ``find_contiguous_mm_spans`` — keeps the producer API back-compat
-    (still 2-tuple) while providing the per-unit mask needed for
-    MultimodalInput.multimodal_embed_mask.
-    """
-    if not isinstance(input_ids, torch.Tensor):
-        if isinstance(input_ids, list):
-            input_ids = torch.tensor(input_ids)
-        elif isinstance(input_ids, np.ndarray):
-            input_ids = torch.from_numpy(input_ids)
-
-    # Build the embed-only mask over the whole prompt, then slice per span.
-    if mm_token_ids is None:
-        embed_mask = input_ids >= vocab_size
-    else:
-        mm_token_ids = mm_token_ids.to(device=input_ids.device,
-                                       dtype=input_ids.dtype)
-        embed_mask = torch.isin(input_ids, mm_token_ids)
-    if mm_special_token_ids is not None:
-        mm_special_token_ids = mm_special_token_ids.to(device=input_ids.device,
-                                                       dtype=input_ids.dtype)
-        embed_mask = embed_mask & ~torch.isin(input_ids, mm_special_token_ids)
-    return [
-        embed_mask[start:start + length].clone()
-        for start, length in contiguous_spans
-    ]
-
-
-def find_mm_token_positions(
-    input_ids: Union[torch.Tensor, List[int], np.ndarray],
-    num_mm_tokens: List[int],
-    vocab_size: Optional[int] = None,
-    mm_token_ids: Optional[torch.Tensor] = None,
-    mm_special_token_ids: Optional[torch.Tensor] = None
-) -> Tuple[List[int], List[int], List[Tuple[int, int]]]:
-    """Get positions of multimodal token chunks using known lengths.
-
-    Finds multimodal tokens (with IDs > vocab_size or matching mm_token_ids)
-    and uses the provided lengths in num_mm_tokens to identify where each chunk starts.
-    Each logical unit in num_mm_tokens may span a non-contiguous range of token positions
-    when text tokens (e.g., video frame separators) are interleaved with multimodal tokens.
-
-    Note: at least one of vocab_size or mm_token_ids must be provided. If mm_token_ids
-    is provided, vocab_size is ignored.
-
-    Args:
-        input_ids: Token sequence (tensor, list, or numpy array)
-        num_mm_tokens: List of token counts for each logical multimodal unit
-        vocab_size: Size of the model's vocabulary (used to identify tokens > vocab_size)
-        mm_token_ids: Specific token IDs that represent multimodal tokens
-        mm_special_token_ids: Specific token IDs that represent special multimodal tokens
-
-    Returns:
-        A 3-tuple of:
-        - start_positions: List of starting positions for each logical multimodal unit
-            (one entry per image/video).
-        - start_special_token_positions: List of positions of special tokens
-            in the union of all chunks (indices into the flat mm token list).
-        - contiguous_spans: List of (start, length) tuples for each contiguous run
-            of MM tokens in ``input_ids``. Used by MultimodalRuntimeData for exact
-            counting during chunked prefill. A single logical unit may produce
-            multiple contiguous spans when its tokens are non-contiguous.
-    """
-    # Delegate mask creation, position scanning, span compression, and
-    # special-token detection to the lighter find_contiguous_mm_spans.
-    contiguous_spans, start_special_token_positions = find_contiguous_mm_spans(
-        input_ids=input_ids,
-        vocab_size=vocab_size,
-        mm_token_ids=mm_token_ids,
-        mm_special_token_ids=mm_special_token_ids,
-    )
-
-    if not contiguous_spans:
-        return [], [], []
-
-    # Reconstruct flat mm_positions from contiguous_spans via vectorized arange+cat.
-    spans_t = torch.tensor(contiguous_spans)  # (N, 2) — [start, length]
-    mm_positions = torch.cat(
-        [torch.arange(s, s + n) for s, n in spans_t.tolist()])
-
-    # Validate total token count against num_mm_tokens.
     lengths_t = torch.tensor(num_mm_tokens)
     assert mm_positions.numel() == lengths_t.sum().item(), (
         f"Number of multimodal tokens ({mm_positions.numel()}) does not match "
-        f"sum of all lengths ({lengths_t.sum().item()}): "
-        f"num_mm_tokens={num_mm_tokens}, contiguous_spans={contiguous_spans}")
+        f"sum of per-unit lengths ({lengths_t.sum().item()}): "
+        f"num_mm_tokens={num_mm_tokens}")
 
-    # Gather start_positions at cumsum offsets (exclusive prefix sum).
     offsets = torch.zeros(len(num_mm_tokens), dtype=torch.long)
     if len(num_mm_tokens) > 1:
         torch.cumsum(lengths_t[:-1], dim=0, out=offsets[1:])
     start_positions = mm_positions[offsets].tolist()
 
-    return start_positions, start_special_token_positions, contiguous_spans
+    return start_positions, start_special_token_positions
 
 
 def validate_mm_inputs(prompt_token_ids: Union[torch.Tensor, List[int],

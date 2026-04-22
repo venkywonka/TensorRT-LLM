@@ -613,7 +613,7 @@ class ADEngine(ModelEngine):
         flat_start_list: List[int] = []
         count_list: List[int] = []
         cumsum_total_mm = 0
-        mm_chunk_embed_mask_flat: List[bool] = []
+        mm_chunk_embed_mask_slices: List[torch.Tensor] = []
         mm_chunk_embed_mask_cu_seqlen: List[int] = [0]
 
         for i, req in enumerate(prefill_requests):
@@ -646,55 +646,34 @@ class ADEngine(ModelEngine):
             mm_token_positions_flat.extend(mm_pos_list)
             mm_token_lengths_flat.extend(mm_len_list)
 
-            # Derive mm_special_offsets from per-unit embed masks (False
-            # positions inside a unit are specials). Fall back to
-            # layout_metadata["special_token_offsets"] for input processors
-            # that don't yet emit multimodal_embed_mask.
-            # TODO: migrate Qwen3.5-VL-MoE processors
-            # (_torch/auto_deploy/models/custom/modeling_qwen3_5_moe{,_ir}.py)
-            # to emit multimodal_embed_mask directly, then delete this fallback.
-            per_unit_masks = (
+            flat_mask = (
                 req.py_multimodal_data.get("multimodal_embed_mask")
                 if req.py_multimodal_data
                 else None
             )
-            if per_unit_masks is not None:
-                special_offsets: List[int] = []
-                mm_cursor = 0
-                for j, per_unit in enumerate(per_unit_masks):
-                    unit_len = int(mm_len_list[j])
-                    if per_unit is not None:
-                        pu = per_unit.tolist() if hasattr(per_unit, "tolist") else list(per_unit)
-                        for k in range(unit_len):
-                            if not bool(pu[k]):
-                                special_offsets.append(mm_cursor + k)
-                    mm_cursor += unit_len
-            else:
-                special_offsets = list(
-                    layout_metadata.get("special_token_offsets", []) if layout_metadata else []
-                )
+            # Indices into this request's flat MM-token list where those
+            # tokens are specials rather than embed slots. Pre-computed at
+            # intake (correct for non-contiguous units) — do NOT re-derive
+            # from flat_mask[pos:pos+len], which mis-slices when the unit is
+            # non-contiguous.
+            special_offsets = list(
+                (req.py_multimodal_data or {}).get("special_token_offsets")
+                or (layout_metadata or {}).get("special_token_offsets", []))
             mm_special_offsets_cu_seqlen.append(
                 mm_special_offsets_cu_seqlen[-1] + len(special_offsets)
             )
             mm_special_offsets_flat.extend(special_offsets)
+
             chunk_len = end_compute - begin_compute
-            if per_unit_masks is not None and chunk_len > 0:
-                full_mask = [False] * len(req.get_tokens(0))
-                for j, per_unit in enumerate(per_unit_masks):
-                    unit_pos = int(mm_pos_list[j])
-                    unit_len = int(mm_len_list[j])
-                    if per_unit is None:
-                        for k in range(unit_len):
-                            full_mask[unit_pos + k] = True
-                    else:
-                        pu = per_unit.tolist() if hasattr(per_unit, "tolist") else list(per_unit)
-                        for k in range(unit_len):
-                            full_mask[unit_pos + k] = bool(pu[k])
-                mm_chunk_embed_mask_flat.extend(full_mask[begin_compute:end_compute])
+            if flat_mask is not None and chunk_len > 0:
+                mm_chunk_embed_mask_slices.append(
+                    flat_mask[begin_compute:end_compute].to(
+                        dtype=torch.bool, device="cpu"))
                 mm_chunk_embed_mask_cu_seqlen.append(mm_chunk_embed_mask_cu_seqlen[-1] + chunk_len)
             else:
                 # 0-length marker keeps cu_seqlen aligned with request order.
                 mm_chunk_embed_mask_cu_seqlen.append(mm_chunk_embed_mask_cu_seqlen[-1])
+
             if not mm_pos or not mm_len:
                 flat_start_list.append(0)
                 count_list.append(0)
@@ -707,24 +686,12 @@ class ADEngine(ModelEngine):
                 end_compute=end_compute,
                 prompt_len=len(all_prompt_tokens),
             )
-            if per_unit_masks is None:
+            if flat_mask is None:
                 # Leave flat_start / count at 0 so concatenated cursors don't advance.
                 flat_start_list.append(0)
                 count_list.append(0)
                 continue
 
-            flat_mask = torch.zeros(len(all_prompt_tokens), dtype=torch.bool)
-            for j, per_unit in enumerate(per_unit_masks):
-                unit_pos = int(mm_pos_list[j])
-                unit_len = int(mm_len_list[j])
-                if per_unit is None:
-                    flat_mask[unit_pos : unit_pos + unit_len] = True
-                else:
-                    flat_mask[unit_pos : unit_pos + unit_len] = (
-                        per_unit.to(torch.bool)
-                        if hasattr(per_unit, "to")
-                        else torch.as_tensor(per_unit, dtype=torch.bool)
-                    )
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,
                 chunk_end_pos=end_compute,
@@ -758,9 +725,10 @@ class ADEngine(ModelEngine):
             req.py_multimodal_data and "multimodal_embed_mask" in req.py_multimodal_data
             for req in prefill_requests
         ):
-            extra_args["mm_chunk_embed_mask"] = [
-                torch.tensor(mm_chunk_embed_mask_flat, dtype=torch.bool, device="cpu")
-            ]
+            mm_chunk_embed_mask = (torch.cat(mm_chunk_embed_mask_slices)
+                                   if mm_chunk_embed_mask_slices else
+                                   torch.empty(0, dtype=torch.bool, device="cpu"))
+            extra_args["mm_chunk_embed_mask"] = [mm_chunk_embed_mask]
             extra_args["mm_chunk_embed_mask_cu_seqlen"] = [
                 torch.tensor(mm_chunk_embed_mask_cu_seqlen, dtype=torch.int32, device="cpu")
             ]

@@ -288,6 +288,7 @@ def filter_mm_token_from_input_ids(
     input_ids: torch.IntTensor,
     vocab_size: int,
     mm_token_ids: Optional[torch.IntTensor] = None,
+    mm_special_token_ids: Optional[torch.IntTensor] = None,
 ) -> Tuple[torch.IntTensor, torch.IntTensor]:
     """
     Filter multimodal tokens from input_ids.
@@ -295,6 +296,12 @@ def filter_mm_token_from_input_ids(
         input_ids: shape [text_total_length + mm_total_length].
         vocab_size: size of the model's vocabulary
         mm_token_ids: possible token ids for multimodal tokens, if known. If not known and set to None, it is assumed that the multimodal tokens are out-of-vocabulary tokens i.e. the `input_ids` contains tokens >= vocab_size that represent the multimodal tokens.
+        mm_special_token_ids: token ids for inline MM specials (e.g. Mistral's
+            image_break, image_end). When provided, these are subtracted from
+            the MM mask so they receive text embeddings rather than being
+            counted as vision-encoder rows. Lets callers pass
+            ``mm_token_ids`` that includes specials without breaking the
+            embed-row count invariant.
     Note:
         This function involves host-device synchronization due to torch.where() (= torch.nonzero) requiring
         host allocation. The output indices reside on the same device as input_ids.
@@ -313,13 +320,16 @@ def filter_mm_token_from_input_ids(
         # the flexibility of still specifying all possible mm_token_ids,
         # if the user wants to.
         mm_token_mask = input_ids >= vocab_size
-        text_token_mask = input_ids < vocab_size
     else:
         mm_token_ids = mm_token_ids.to(input_ids.device, dtype=input_ids.dtype)
         mm_token_mask = torch.isin(input_ids, mm_token_ids)
-        text_token_mask = ~mm_token_mask
+    if mm_special_token_ids is not None:
+        mm_special_token_ids = mm_special_token_ids.to(input_ids.device,
+                                                       dtype=input_ids.dtype)
+        mm_token_mask = mm_token_mask & ~torch.isin(input_ids,
+                                                    mm_special_token_ids)
     # NOTE: torch.where() enforces a host sync
-    text_token_indices = torch.where(text_token_mask)[0]
+    text_token_indices = torch.where(~mm_token_mask)[0]
     mm_token_indices = torch.where(mm_token_mask)[0]
     return text_token_indices, mm_token_indices
 
@@ -329,10 +339,10 @@ def fuse_input_embeds(
     input_ids: torch.IntTensor,
     mm_embeds: List[torch.Tensor],
     mm_token_ids: Optional[torch.IntTensor] = None,
+    mm_special_token_ids: Optional[torch.IntTensor] = None,
     text_token_indices: Optional[torch.IntTensor] = None,
     mm_token_indices: Optional[torch.IntTensor] = None,
     extra_embeds: Optional[List[torch.Tensor]] = None,
-    multimodal_params: Optional[List[MultimodalParams]] = None,
     **kwargs,
     # TODO: make unified return type for all models
 ) -> Union[Tuple[Optional[torch.IntTensor], Optional[torch.FloatTensor]],
@@ -347,13 +357,19 @@ def fuse_input_embeds(
         mm_embeds: List[(mm_total_length1, hidden_dim), ..., (mm_total_lengthi, hidden_dim)].
         mm_token_ids: possible token ids for multimodal tokens, if known. If not known and set to None, it is assumed that the multimodal tokens are out-of-vocabulary tokens.
         extra_embeds: Optional list of extra embed tensors for models that support it (e.g., Qwen3-VL/Qwen3-MoE-VL).
-        multimodal_params: Optional per-request MultimodalParams. When provided, the fuser takes the mask path: it reads (and if necessary materializes) MultimodalInput.embed_mask_flat per request and derives text/mm indices from the per-chunk slice, bypassing the vocab-predicate filter. This path excludes inline specials by construction.
     Returns:
         - If (1) JIT test run, (2) non-multimodal run, i.e. all text-only requests, either context or generation phase (3) multimodal run, all requests in generation phase --> there is no multimodal data, return only the input_ids
         - If (4) multimodal run, mixed batch of context and generation requests, each context request has a multimodal feature --> return only the fused input_embeds of shape [total length, hidden_dim]. For text tokens, LLM embedding layer has already run.
     Note:
-        - Precedence: mask path (via multimodal_params) > caller-supplied indices > vocab-predicate filter.
         - This function may involve host-device synchronization if indices are not provided and filtering is performed. See filter_mm_token_from_input_ids for details.
+        - When ``multimodal_params`` is forwarded via kwargs (the standard
+          model-engine path), each request's flat ``multimodal_embed_mask``
+          is used to classify token positions. This is required for models
+          whose ``mm_token_ids`` intentionally include inline specials
+          (e.g. Mistral's ``image_break`` / ``image_end``): the flat mask
+          has specials subtracted at intake, so vision embeddings land
+          only on actual embed slots. Without the mask path, those
+          specials are miscounted as vision rows by the vocab predicate.
     """
     if len(mm_embeds) == 0:
         if extra_embeds is not None and len(extra_embeds) > 0:
@@ -362,37 +378,51 @@ def fuse_input_embeds(
 
     mm_embed = torch.cat(mm_embeds, dim=0)
 
-    if multimodal_params and all(p.multimodal_input is not None
-                                 for p in multimodal_params):
-        slices = []
-        cursor = 0
+    if text_token_indices is None or mm_token_indices is None:
+        # Prefer the intake-authored flat embed mask (specials-subtracted).
+        # For mixed context+generation batches, synthesize an all-False
+        # slice for entries without a mask so we don't fall back to the
+        # vocab predicate whenever the batch is heterogeneous:
+        #   - mask + runtime        -> mask[past:end]
+        #   - no mask + runtime     -> zeros(end-past)   (text-only context)
+        #   - no mask + no runtime  -> zeros(1)          (generation token)
+        # If the synthesized slices don't cover input_ids.shape[0] (e.g.
+        # speculative decoding, multi-token gen), fall back to the vocab
+        # predicate — correct as long as the caller's mm_token_ids excludes
+        # inline specials (which every in-tree VLM caller does today).
+        multimodal_params = kwargs.get("multimodal_params") or []
+        mask_slices: List[torch.Tensor] = []
         for p in multimodal_params:
-            mi = p.multimodal_input
+            mask = (p.multimodal_data.get("multimodal_embed_mask")
+                    if p.multimodal_data else None)
             rt = p.multimodal_runtime
-            past = rt.past_seen_token_num if rt is not None else 0
-            end = rt.chunk_end_pos if rt is not None else None
-            if mi.embed_mask_flat is None:
-                chunk_len = (end -
-                             past) if end is not None else input_ids.shape[0]
-                req_prompt = input_ids[cursor:cursor + chunk_len]
-                mi.materialize_embed_mask(
-                    prompt_token_ids=req_prompt,
-                    vocab_size=embedding_layer.num_embeddings,
-                    mm_token_ids=mm_token_ids,
-                )
-            if end is None:
-                end = mi.embed_mask_flat.shape[0]
-            slices.append(mi.embed_mask_flat[past:end].to(input_ids.device))
-            cursor += (end - past)
-        mm_mask = torch.cat(slices) if len(slices) > 1 else slices[0]
-        mm_token_indices = torch.where(mm_mask)[0]
-        text_token_indices = torch.where(~mm_mask)[0]
-    elif text_token_indices is None or mm_token_indices is None:
-        # NOTE: This function involves host-device synchronization due to torch.where() used in filter_mm_token_from_input_ids.
-        text_token_indices, mm_token_indices = filter_mm_token_from_input_ids(
-            input_ids,
-            vocab_size=embedding_layer.num_embeddings,
-            mm_token_ids=mm_token_ids)
+            if mask is not None:
+                past = rt.past_seen_token_num if rt is not None else 0
+                end = rt.chunk_end_pos if rt is not None else mask.shape[0]
+                mask_slices.append(
+                    mask[past:end].to(device=input_ids.device,
+                                      dtype=torch.bool))
+            elif rt is not None:
+                mask_slices.append(
+                    torch.zeros(rt.chunk_end_pos - rt.past_seen_token_num,
+                                dtype=torch.bool,
+                                device=input_ids.device))
+            else:
+                mask_slices.append(
+                    torch.zeros(1, dtype=torch.bool, device=input_ids.device))
+        if (mask_slices and sum(s.shape[0]
+                                for s in mask_slices) == input_ids.shape[0]):
+            mm_mask = (torch.cat(mask_slices)
+                       if len(mask_slices) > 1 else mask_slices[0])
+            mm_token_indices = torch.where(mm_mask)[0]
+            text_token_indices = torch.where(~mm_mask)[0]
+        else:
+            # NOTE: This function involves host-device synchronization due to torch.where() used in filter_mm_token_from_input_ids.
+            text_token_indices, mm_token_indices = filter_mm_token_from_input_ids(
+                input_ids,
+                vocab_size=embedding_layer.num_embeddings,
+                mm_token_ids=mm_token_ids,
+                mm_special_token_ids=mm_special_token_ids)
     if mm_token_indices.shape[0] != mm_embed.shape[0]:
         raise ValueError(
             f"Multimodal token count mismatch: found {len(mm_token_indices)} image tokens in input_ids "

@@ -20,9 +20,8 @@ from ..sampling_params import SamplingParams
 from .content_format import ContentFormat
 from .data import TextPrompt
 from .multimodal import (MultimodalInput, apply_mm_hashes, default_hasher,
-                         find_contiguous_mm_spans, find_mm_token_lengths,
-                         find_mm_token_positions, hexdigest_to_int32,
-                         validate_mm_inputs)
+                         find_mm_token_lengths, find_mm_token_positions,
+                         hexdigest_to_int32, validate_mm_inputs)
 
 N = TypeVar("N", bound=Type[nn.Module])
 
@@ -240,17 +239,16 @@ class BaseMultimodalInputProcessor(ABC):
     def get_mm_token_ids(self) -> Optional[Tensor]:
         """Return the set of token IDs that belong to a logical multimodal unit.
 
-        The returned IDs are used as an inclusion mask by
-        ``find_contiguous_mm_spans`` (see ``tensorrt_llm/inputs/multimodal.py``),
-        which groups **runs of adjacent matching positions** in ``input_ids`` into
-        spans. To ensure one logical unit (e.g. one image, one video) shows up as
-        a **single** span, include every token the model uses to represent that
-        unit — placeholders AND any in-prompt framing tokens (e.g. ``image_break``,
-        ``image_end``) that sit between placeholders.
+        The returned IDs are used as an inclusion mask by the embed-mask
+        producer (``compute_mm_embed_mask_if_absent`` /
+        ``find_mm_token_positions``) to classify each prompt position as
+        embed vs non-embed. Include every token the model uses to represent
+        a logical unit — placeholders AND any in-prompt framing tokens
+        (e.g. ``image_break``, ``image_end``) that sit between placeholders —
+        so that one image/video produces one outer-box span.
 
-        Omitting framing IDs will fragment a single logical unit into multiple
-        spans, breaking downstream per-unit accounting (hashing, KV-cache reuse,
-        chunked prefill bookkeeping).
+        Omitting framing IDs will break downstream per-unit accounting
+        (hashing, KV-cache reuse, chunked prefill bookkeeping).
 
         Example (Mistral-style single image)::
 
@@ -772,10 +770,11 @@ def compute_mm_embed_mask_if_absent(
 ) -> None:
     """Ensure ``multimodal_embed_mask`` is present in ``extra_processed_inputs``.
 
-    Idempotent: no-op when the mask is already populated. Otherwise scans
-    ``prompt_token_ids`` with the vocab / mm-token-id predicate from
-    ``input_processor`` to produce per-logical-unit bool masks and stores
-    them at ``extra_processed_inputs["multimodal_data"]["multimodal_embed_mask"]``.
+    Idempotent: no-op when the mask is already populated. Otherwise classifies
+    every prompt position via the processor's ``mm_token_ids`` /
+    ``vocab_size`` predicate (with specials subtracted) and stores the flat
+    ``bool[prompt_len]`` tensor at
+    ``extra_processed_inputs["multimodal_data"]["multimodal_embed_mask"]``.
 
     Silently skipped if the processor provides neither ``vocab_size`` nor
     ``mm_token_ids``. Does not touch ``layout_metadata`` — Qwen3.5-VL-MoE
@@ -797,21 +796,22 @@ def compute_mm_embed_mask_if_absent(
             "vocab_size nor mm_token_ids — skipping mask computation.")
         return
 
+    input_ids = prompt_token_ids if isinstance(
+        prompt_token_ids, torch.Tensor) else torch.as_tensor(prompt_token_ids)
+    if mm_token_ids is not None:
+        mm_token_ids = mm_token_ids.to(device=input_ids.device,
+                                       dtype=input_ids.dtype)
+        mask = torch.isin(input_ids, mm_token_ids)
+    else:
+        mask = input_ids >= vocab_size
+
     mm_special_token_ids = input_processor.get_mm_special_token_ids()
-    contiguous_spans, _ = find_contiguous_mm_spans(
-        input_ids=prompt_token_ids,
-        vocab_size=vocab_size,
-        mm_token_ids=mm_token_ids,
-        mm_special_token_ids=mm_special_token_ids,
-    )
-    from tensorrt_llm.inputs.multimodal import compute_per_unit_embed_masks
-    mm_data["multimodal_embed_mask"] = compute_per_unit_embed_masks(
-        input_ids=prompt_token_ids,
-        contiguous_spans=contiguous_spans,
-        vocab_size=vocab_size,
-        mm_token_ids=mm_token_ids,
-        mm_special_token_ids=mm_special_token_ids,
-    )
+    if mm_special_token_ids is not None:
+        mm_special_token_ids = mm_special_token_ids.to(device=input_ids.device,
+                                                       dtype=input_ids.dtype)
+        mask = mask & ~torch.isin(input_ids, mm_special_token_ids)
+
+    mm_data["multimodal_embed_mask"] = mask
 
 
 def create_input_processor_with_hash(
@@ -945,7 +945,7 @@ def create_input_processor_with_hash(
             raise ValueError(
                 "Cannot locate vocab_size or mm_token_ids for multimodal token preprocessing"
             )
-        start_positions, start_special_token_positions, contiguous_spans = find_mm_token_positions(
+        start_positions, start_special_token_positions = find_mm_token_positions(
             input_ids=prompt_token_ids,  # token sequence
             num_mm_tokens=
             num_mm_tokens,  # list of lengths of each chunk of visual tokens

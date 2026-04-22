@@ -277,8 +277,11 @@ def test_ad_engine_chunked_prefill_stages_multimodal_runtime_metadata():
     req = _DummyRequest(tokens=tokens, begin=4, size=4, seq_slot=0)
     req.multimodal_positions = [2]
     req.multimodal_lengths = [4]
+    # Flat prompt-length mask: text at [0,1,6,7], embeds at [2..5].
     req.py_multimodal_data = {
-        "multimodal_embed_mask": [torch.tensor([True, True, True, True])],
+        "multimodal_embed_mask":
+        torch.tensor(
+            [False, False, True, True, True, True, False, False]),
     }
 
     scheduled_requests = ScheduledRequests()
@@ -378,9 +381,11 @@ def test_ad_engine_stages_mm_chunk_bounds_for_multimodal_block_reuse():
     req = _DummyRequest(tokens=tokens, begin=4, size=4, seq_slot=0)
     req.multimodal_positions = [2]
     req.multimodal_lengths = [4]
-    # 4-slot unit, all embed (no inline specials) -> mask [T,T,T,T].
+    # 4-slot unit at positions 2..5, no inline specials.
     req.py_multimodal_data = {
-        "multimodal_embed_mask": [torch.tensor([True, True, True, True])],
+        "multimodal_embed_mask":
+        torch.tensor(
+            [False, False, True, True, True, True, False, False]),
     }
 
     scheduled_requests = ScheduledRequests()
@@ -429,15 +434,20 @@ def test_ad_engine_stages_mm_chunk_embed_mask_from_mask_field():
     resource_manager = _DummyResourceManager(kv_manager)
 
     # Prompt layout: [text, text, u0, u1, u2, u3, text, text]
-    # Unit at pos 2, length 4. Per-unit mask [T,T,F,T] -> special at rel pos 2
-    # (absolute pos 4). Chunk covers absolute positions [4:8] -> mask slice
+    # Unit at pos 2, length 4. Flat mask: positions 2,3,5 embed; 4 special;
+    # 0,1,6,7 text. Chunk covers absolute positions [4:8] -> mask slice
     # becomes [F, T, F, F] (pos 4 special, pos 5 embed, pos 6/7 text).
+    # Real intake (find_mm_token_positions) emits special_token_offsets
+    # alongside the mask; mimic that co-emission here.
     tokens = [1, 2, 99, 99, 99, 99, 3, 4]
     req = _DummyRequest(tokens=tokens, begin=4, size=4, seq_slot=0)
     req.multimodal_positions = [2]
     req.multimodal_lengths = [4]
     req.py_multimodal_data = {
-        "multimodal_embed_mask": [torch.tensor([True, True, False, True])],
+        "multimodal_embed_mask":
+        torch.tensor(
+            [False, False, True, True, False, True, False, False]),
+        "special_token_offsets": [2],
     }
 
     scheduled_requests = ScheduledRequests()
@@ -476,6 +486,65 @@ def test_ad_engine_stages_mm_chunk_embed_mask_from_mask_field():
         torch.tensor([0, 1], dtype=torch.int32),
     )
 
+    cache_seq_interface.shutdown()
+
+
+def test_ad_engine_mm_special_offsets_for_non_contiguous_unit():
+    """Non-contiguous unit: mm_special_offsets must be the pre-computed
+    indices into the MM-token list, not derived from flat_mask[pos:pos+len]
+    (which would be wrong because multimodal_lengths is an MM-token count,
+    not an outer-box span)."""
+    device = torch.device("cuda")
+    max_seq_len = 64
+    max_batch_size = 8
+
+    kv_cache_config = KvCacheConfig(tokens_per_block=8)
+    cache_seq_interface = CachedSequenceInterface(
+        max_seq_len=max_seq_len,
+        max_batch_size=max_batch_size,
+        max_num_tokens=default_max_num_tokens(max_seq_len, max_batch_size),
+        device=device,
+        kv_cache_config=kv_cache_config,
+    )
+    cache_seq_interface.to(device)
+
+    engine = ADEngine(get_inference_model, cache_seq_interface)
+    engine._enable_chunked_prefill = True
+    kv_manager = _DummyKVCacheManager(tokens_per_block=8)
+    resource_manager = _DummyResourceManager(kv_manager)
+
+    # Prompt layout (12 tokens): [t, t, E, E, t, t, S, E, E, t, t, t]
+    # One logical unit with MM tokens at positions 2,3,6,7,8 (5 MM tokens,
+    # gap at 4-5 is interleaved text). Token at pos 6 is a special.
+    # multimodal_positions=[2], multimodal_lengths=[5] (MM-token count, not
+    # outer-box span of 7). special_token_offsets=[2] — index 2 in the flat
+    # mm-token list.
+    tokens = [1, 2, 90, 91, 3, 4, 95, 92, 93, 5, 6, 7]
+    req = _DummyRequest(tokens=tokens, begin=0, size=12, seq_slot=0)
+    req.multimodal_positions = [2]
+    req.multimodal_lengths = [5]
+    req.py_multimodal_data = {
+        "multimodal_embed_mask":
+        torch.tensor([
+            False, False, True, True, False, False, False, True, True, False,
+            False, False
+        ]),
+        "special_token_offsets": [2],
+    }
+
+    scheduled_requests = ScheduledRequests()
+    scheduled_requests.context_requests_last_chunk.append(req)
+    engine._prepare_inputs(scheduled_requests, resource_manager, new_tokens=None)
+
+    named_args = cache_seq_interface.named_args
+    torch.testing.assert_close(
+        named_args["mm_special_offsets"].cpu(),
+        torch.tensor([2], dtype=torch.int32),
+    )
+    torch.testing.assert_close(
+        named_args["mm_special_offsets_cu_seqlen"].cpu(),
+        torch.tensor([0, 1], dtype=torch.int32),
+    )
     cache_seq_interface.shutdown()
 
 

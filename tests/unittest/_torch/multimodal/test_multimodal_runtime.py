@@ -9,7 +9,6 @@ from tensorrt_llm._torch.models.modeling_multimodal_utils import (
     find_input_mm_embeds, get_multimodal_embeddings)
 from tensorrt_llm.inputs.multimodal import (MultimodalParams,
                                             MultimodalRuntimeData,
-                                            find_contiguous_mm_spans,
                                             find_mm_token_positions)
 from tensorrt_llm.inputs.registry import compute_mm_embed_mask_if_absent
 
@@ -639,18 +638,18 @@ class TestGetMultimodalEmbeddings:
 
 
 class TestFindMmTokenPositions:
-    """Test cases for find_mm_token_positions — verifies 3-tuple return
-    (start_positions, special_positions, contiguous_spans)."""
+    """Test cases for find_mm_token_positions — verifies 2-tuple return
+    (start_positions, special_positions)."""
 
     def test_early_return_no_mm_tokens(self):
-        """When input has no MM tokens, should return three empty lists."""
+        """When input has no MM tokens, should return two empty lists."""
         input_ids = torch.tensor([1, 2, 3, 4, 5])
         result = find_mm_token_positions(
             input_ids=input_ids,
             num_mm_tokens=[],
             vocab_size=100,
         )
-        assert result == ([], [], [])
+        assert result == ([], [])
 
     def test_early_return_no_match(self):
         """When mm_token_ids don't match anything in input_ids."""
@@ -660,74 +659,61 @@ class TestFindMmTokenPositions:
             num_mm_tokens=[2],
             mm_token_ids=torch.tensor([99]),
         )
-        assert result == ([], [], [])
+        assert result == ([], [])
 
     def test_basic_contiguous_tokens(self):
         """Basic case: contiguous MM tokens identified by out-of-vocab IDs."""
-        # vocab_size=10, tokens >= 10 are MM tokens
         input_ids = torch.tensor([1, 2, 10, 11, 12, 3, 4, 10, 11, 5])
-        start_pos, special_pos, spans = find_mm_token_positions(
+        start_pos, special_pos = find_mm_token_positions(
             input_ids=input_ids,
             num_mm_tokens=[3, 2],
             vocab_size=10,
         )
         assert start_pos == [2, 7]
         assert special_pos == []
-        assert spans == [(2, 3), (7, 2)]
 
     def test_with_mm_token_ids(self):
         """MM tokens identified by explicit token IDs."""
         input_ids = torch.tensor([1, 5, 5, 5, 2, 3, 5, 5, 4])
-        start_pos, special_pos, spans = find_mm_token_positions(
+        start_pos, _ = find_mm_token_positions(
             input_ids=input_ids,
             num_mm_tokens=[3, 2],
             mm_token_ids=torch.tensor([5]),
         )
         assert start_pos == [1, 6]
-        assert spans == [(1, 3), (6, 2)]
 
     def test_with_special_tokens(self):
-        """Special tokens (e.g., image_break, image_end) detected within MM region."""
-        # Token 5 = MM placeholder, Token 6 = image_break (special), Token 7 = image_end (special)
+        """Special tokens (e.g. image_break) detected within MM region."""
         input_ids = torch.tensor([1, 5, 5, 6, 5, 7, 2])
-        start_pos, special_pos, spans = find_mm_token_positions(
+        start_pos, special_pos = find_mm_token_positions(
             input_ids=input_ids,
             num_mm_tokens=[5],
             mm_token_ids=torch.tensor([5]),
             mm_special_token_ids=torch.tensor([6, 7]),
         )
         assert start_pos == [1]
-        # special_pos are indices into the flat mm token list where specials occur
         assert special_pos == [2, 4]
-        # All 5 MM tokens are contiguous at positions 1-5
-        assert spans == [(1, 5)]
 
-    def test_non_contiguous_tokens(self):
-        """MM tokens scattered with text gaps between them."""
-        # Two groups of MM tokens separated by text
+    def test_non_contiguous_single_unit(self):
+        """One unit with interleaved non-MM text — start is the first MM
+        position; num_mm_tokens stays the encoder-row count."""
         input_ids = torch.tensor([1, 100, 100, 2, 3, 100, 100, 100, 4])
-        start_pos, special_pos, spans = find_mm_token_positions(
+        start_pos, _ = find_mm_token_positions(
             input_ids=input_ids,
-            num_mm_tokens=[5],  # Single item spanning non-contiguous positions
+            num_mm_tokens=[5],
             vocab_size=10,
         )
         assert start_pos == [1]
-        # Two contiguous groups: [1,2] and [5,6,7]
-        assert spans == [(1, 2), (5, 3)]
 
     def test_non_contiguous_multiple_items(self):
-        """Multiple items, each with non-contiguous tokens."""
-        # Item 1: 3 tokens at [1,2] and [5] (gap at 3,4)
-        # Item 2: 2 tokens at [8,9]
+        """Multiple items with non-contiguous MM positions."""
         input_ids = torch.tensor([0, 100, 100, 0, 0, 100, 0, 0, 100, 100, 0])
-        start_pos, special_pos, spans = find_mm_token_positions(
+        start_pos, _ = find_mm_token_positions(
             input_ids=input_ids,
             num_mm_tokens=[3, 2],
             vocab_size=10,
         )
         assert start_pos == [1, 8]
-        # Three contiguous groups across both items: [1,2], [5], [8,9]
-        assert spans == [(1, 2), (5, 1), (8, 2)]
 
     def test_raises_without_vocab_size_or_mm_token_ids(self):
         """Should raise ValueError when neither vocab_size nor mm_token_ids provided."""
@@ -761,7 +747,8 @@ class _MockProcessor:
 
 
 class TestComputeMmEmbedMaskIfAbsent:
-    """Test cases for compute_mm_embed_mask_if_absent — the idempotent post-processing helper."""
+    """Test cases for compute_mm_embed_mask_if_absent — emits a flat bool
+    tensor at ``extra["multimodal_data"]["multimodal_embed_mask"]``."""
 
     def test_none_extra_is_noop(self):
         """No crash when extra_processed_inputs is None."""
@@ -775,7 +762,7 @@ class TestComputeMmEmbedMaskIfAbsent:
 
     def test_already_present_is_idempotent(self):
         """Existing mask is NOT overwritten."""
-        original_mask = [torch.tensor([True, True, True, True, True])]
+        original_mask = torch.tensor([True, True, True, True, True])
         extra = {"multimodal_data": {"multimodal_embed_mask": original_mask}}
         compute_mm_embed_mask_if_absent([100, 101, 102, 103, 104], extra,
                                         _MockProcessor(vocab_size=100))
@@ -783,37 +770,34 @@ class TestComputeMmEmbedMaskIfAbsent:
                 is original_mask)
 
     def test_computes_mask_when_absent(self):
-        """Per-unit mask computed from token IDs when not already present."""
+        """Flat bool mask computed from token IDs when not already present."""
         extra = {"multimodal_data": {"multimodal_embedding": "placeholder"}}
-        # input: [1, 100, 101, 2, 102] → mm runs at positions [1..3) and [4..5),
-        # vocab_size=100 → ids >= 100 are mm. Two spans of lengths 2 and 1,
-        # all-embed (no specials) -> [T,T] and [T].
+        # input: [1, 100, 101, 2, 102] → ids >= vocab_size=100 are mm.
         compute_mm_embed_mask_if_absent([1, 100, 101, 2, 102], extra,
                                         _MockProcessor(vocab_size=100))
-        masks = extra["multimodal_data"]["multimodal_embed_mask"]
-        assert len(masks) == 2
-        assert torch.equal(masks[0], torch.tensor([True, True]))
-        assert torch.equal(masks[1], torch.tensor([True]))
+        mask = extra["multimodal_data"]["multimodal_embed_mask"]
+        assert torch.equal(
+            mask, torch.tensor([False, True, True, False, True]))
 
-    def test_no_mm_tokens_stores_empty(self):
-        """When no MM tokens found, stores empty list (not None)."""
+    def test_no_mm_tokens_stores_all_false(self):
+        """When no MM tokens match, stores an all-False flat mask."""
         extra = {"multimodal_data": {"some_key": "value"}}
         compute_mm_embed_mask_if_absent([1, 2, 3], extra,
                                         _MockProcessor(vocab_size=100))
-        assert extra["multimodal_data"]["multimodal_embed_mask"] == []
+        mask = extra["multimodal_data"]["multimodal_embed_mask"]
+        assert torch.equal(mask, torch.tensor([False, False, False]))
 
     def test_mask_excludes_special_tokens(self):
-        """Specials inside a span show up as False in the per-unit mask."""
+        """Specials are False in the flat mask."""
         proc = _MockProcessor(vocab_size=None,
                               mm_token_ids=torch.tensor([50, 60]),
                               mm_special_token_ids=torch.tensor([60]))
         extra = {"multimodal_data": {"embed": "x"}}
-        # input: [1, 50, 60, 50, 2] → mm run [1..4), special at absolute pos 2.
-        # Per-unit mask (length 3) = [True, False, True].
+        # input: [1, 50, 60, 50, 2] → mm at positions 1,3; special at 2.
         compute_mm_embed_mask_if_absent([1, 50, 60, 50, 2], extra, proc)
-        masks = extra["multimodal_data"]["multimodal_embed_mask"]
-        assert len(masks) == 1
-        assert torch.equal(masks[0], torch.tensor([True, False, True]))
+        mask = extra["multimodal_data"]["multimodal_embed_mask"]
+        assert torch.equal(
+            mask, torch.tensor([False, True, False, True, False]))
 
     def test_no_vocab_and_no_mm_ids_is_noop(self):
         """When processor provides neither vocab_size nor mm_token_ids, no crash."""
@@ -822,106 +806,6 @@ class TestComputeMmEmbedMaskIfAbsent:
         compute_mm_embed_mask_if_absent([100, 101], extra, proc)
         # Should not have set the mask since we can't identify MM tokens
         assert "multimodal_embed_mask" not in extra["multimodal_data"]
-
-
-class TestFindContiguousMmSpans:
-    """Test cases for find_contiguous_mm_spans — the lightweight span scanner
-    that does NOT require num_mm_tokens."""
-
-    def test_no_mm_tokens_returns_empty(self):
-        """Input with no MM tokens returns empty spans and offsets."""
-        spans, offsets = find_contiguous_mm_spans(
-            input_ids=[1, 2, 3, 4, 5],
-            vocab_size=100,
-        )
-        assert spans == []
-        assert offsets == []
-
-    def test_single_contiguous_run_vocab_size(self):
-        """Single contiguous run detected via vocab_size threshold."""
-        spans, offsets = find_contiguous_mm_spans(
-            input_ids=[1, 100, 101, 2],
-            vocab_size=100,
-        )
-        assert spans == [(1, 2)]
-        assert offsets == []
-
-    def test_two_runs_separated_by_text(self):
-        """Two contiguous runs separated by text tokens."""
-        spans, offsets = find_contiguous_mm_spans(
-            input_ids=[100, 101, 5, 102, 103],
-            vocab_size=100,
-        )
-        assert spans == [(0, 2), (3, 2)]
-        assert offsets == []
-
-    def test_with_mm_token_ids(self):
-        """MM tokens identified by explicit token IDs instead of vocab_size."""
-        spans, offsets = find_contiguous_mm_spans(
-            input_ids=[1, 50, 50, 2, 50, 3],
-            mm_token_ids=torch.tensor([50]),
-        )
-        assert spans == [(1, 2), (4, 1)]
-        assert offsets == []
-
-    def test_with_special_tokens(self):
-        """Special tokens included in mask and reported as offsets."""
-        # Token 5 = MM, Token 6 = special (image_break)
-        spans, offsets = find_contiguous_mm_spans(
-            input_ids=[1, 5, 5, 6, 5, 2],
-            mm_token_ids=torch.tensor([5]),
-            mm_special_token_ids=torch.tensor([6]),
-        )
-        # All 4 tokens [1..4] are contiguous (5,5,6,5 — special 6 is also MM)
-        assert spans == [(1, 4)]
-        # In the flat mm_positions [1,2,3,4], index 2 is the special token (value 6)
-        assert offsets == [2]
-
-    @pytest.mark.parametrize("input_ids", [
-        torch.tensor([1, 100, 101, 2]),
-        np.array([1, 100, 101, 2]),
-    ],
-                             ids=["tensor", "numpy"])
-    def test_array_like_input(self, input_ids):
-        """Accepts torch.Tensor and numpy array input_ids."""
-        spans, offsets = find_contiguous_mm_spans(input_ids=input_ids,
-                                                  vocab_size=100)
-        assert spans == [(1, 2)]
-
-    def test_raises_without_vocab_size_or_mm_token_ids(self):
-        """Should raise ValueError when neither vocab_size nor mm_token_ids provided."""
-        with pytest.raises(ValueError,
-                           match="Provide either mm_token_ids or vocab_size"):
-            find_contiguous_mm_spans(input_ids=[1, 2, 3])
-
-    def test_empty_input_ids(self):
-        """Empty input returns empty spans."""
-        spans, offsets = find_contiguous_mm_spans(
-            input_ids=[],
-            vocab_size=100,
-        )
-        assert spans == []
-        assert offsets == []
-
-    def test_all_mm_tokens(self):
-        """All tokens are MM — single span covering entire input."""
-        spans, offsets = find_contiguous_mm_spans(
-            input_ids=[100, 101, 102],
-            vocab_size=100,
-        )
-        assert spans == [(0, 3)]
-
-    def test_multiple_special_tokens(self):
-        """Multiple special tokens at different positions."""
-        # 5=MM, 6=special, 7=special
-        spans, offsets = find_contiguous_mm_spans(
-            input_ids=[1, 5, 6, 5, 7, 2],
-            mm_token_ids=torch.tensor([5]),
-            mm_special_token_ids=torch.tensor([6, 7]),
-        )
-        assert spans == [(1, 4)]
-        # flat mm_positions: [1,2,3,4] → index 1 is token 6, index 3 is token 7
-        assert offsets == [1, 3]
 
 
 if __name__ == "__main__":
