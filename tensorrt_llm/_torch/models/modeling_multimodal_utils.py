@@ -380,16 +380,17 @@ def fuse_input_embeds(
 
     if text_token_indices is None or mm_token_indices is None:
         # Prefer the intake-authored flat embed mask (specials-subtracted).
-        # For mixed context+generation batches, synthesize an all-False
-        # slice for entries without a mask so we don't fall back to the
-        # vocab predicate whenever the batch is heterogeneous:
-        #   - mask + runtime        -> mask[past:end]
-        #   - no mask + runtime     -> zeros(end-past)   (text-only context)
-        #   - no mask + no runtime  -> zeros(1)          (generation token)
-        # If the synthesized slices don't cover input_ids.shape[0] (e.g.
-        # speculative decoding, multi-token gen), fall back to the vocab
-        # predicate — correct as long as the caller's mm_token_ids excludes
-        # inline specials (which every in-tree VLM caller does today).
+        # model_engine attaches a MultimodalRuntimeData to every context
+        # request (zeros cumsum for text-only contexts), so the mask path
+        # covers mixed MM+text context batches without touching the
+        # token-ID predicate:
+        #   - mask + runtime        -> mask[past:end]      (MM context)
+        #   - no mask + runtime     -> zeros(end-past)     (text-only context)
+        #   - no mask + no runtime  -> zeros(1)            (generation token)
+        # Fallback only when the synthesis doesn't cover input_ids.shape[0]
+        # (e.g. speculative decoding with multi-token gen). The defensive
+        # mm_special_token_ids subtraction keeps the fallback correct even
+        # if a caller's mm_token_ids includes inline specials.
         multimodal_params = kwargs.get("multimodal_params") or []
         mask_slices: List[torch.Tensor] = []
         for p in multimodal_params:

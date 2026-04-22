@@ -2314,13 +2314,19 @@ class PyTorchModelEngine(ModelEngine):
             )
             mm_embed_mask = request.py_multimodal_data.get(
                 'multimodal_embed_mask') if request.py_multimodal_data else None
-            py_multimodal_runtime = None
-            if mm_embed_mask is not None:
-                py_multimodal_runtime = MultimodalRuntimeData(
-                    embed_mask_cumsum=mm_embed_mask.to(torch.int64).cumsum(0),
-                    past_seen_token_num=past_seen_token_num,
-                    chunk_end_pos=end_compute,
-                )
+            # Attach multimodal_runtime to EVERY context request (MM and
+            # text-only) so fuse_input_embeds can cover the full batch via
+            # per-request chunk bounds and never has to fall back to the
+            # token-ID predicate for mixed MM+text context batches. For
+            # text-only contexts, a zeros cumsum yields 0 MM counts.
+            mask_for_cumsum = (mm_embed_mask if mm_embed_mask is not None else
+                               torch.zeros(len(all_prompt_tokens),
+                                           dtype=torch.bool))
+            py_multimodal_runtime = MultimodalRuntimeData(
+                embed_mask_cumsum=mask_for_cumsum.to(torch.int64).cumsum(0),
+                past_seen_token_num=past_seen_token_num,
+                chunk_end_pos=end_compute,
+            )
 
             multimodal_params = MultimodalParams(
                 multimodal_data=request.py_multimodal_data,
@@ -2348,7 +2354,6 @@ class PyTorchModelEngine(ModelEngine):
 
                 #re-assign the multimodal_data to the request after to_device for generation requests
                 request.py_multimodal_data = multimodal_params.multimodal_data
-                multimodal_params_list.append(multimodal_params)
 
                 # Re-register mrope tensors for context-only requests (EPD disaggregated serving).
                 # This creates new IPC handles owned by the prefill worker, so the decode worker
@@ -2366,6 +2371,10 @@ class PyTorchModelEngine(ModelEngine):
                         request.py_result.set_mrope_position(
                             _mrope_position_ids.clone(),
                             _mrope_position_deltas.clone())
+            # Append unconditionally: downstream MM-specific consumers still
+            # filter by has_content() / multimodal_data presence; fuse_input_embeds
+            # benefits from seeing every context request's chunk bounds.
+            multimodal_params_list.append(multimodal_params)
 
             request.py_batch_idx = request.py_seq_slot
 
