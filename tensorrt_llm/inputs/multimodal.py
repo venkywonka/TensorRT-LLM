@@ -35,20 +35,21 @@ class MultimodalInput:
     multimodal_lengths: List[int]
     """Per logical unit count of prompt-side MM tokens.
 
-    This counts prompt positions where ``mm_mask = embed_mask | special_mask``
+    This counts prompt positions where `mm_mask = embed_mask | special_mask`
     is true. It includes MM special/framing tokens and excludes ordinary
     interleaved text, so it is not a bounding-box span for sparse layouts and
-    is not always the number of encoder embedding rows.
+    is not always the number of encoder-output embedding vectors produced for
+    this item.
 
     Current consumers overload this value: encoder-only split paths use it as
-    an embedding row count, the C++ KV hasher treats ``start + length`` as a
-    contiguous prompt span, and AutoDeploy forwards it as VLM layout metadata.
-
-    TODO(TRTLLM-12175): split this into explicit layout fields, such as
-    per-item MM-token offsets/lengths, per-item embedding row lengths, and
-    prompt-position segments or masks for sparse layouts. Once those fields
-    are plumbed, remove the ambiguous ``multimodal_lengths`` contract.
+    an encoder-output embedding count, the C++ KV hasher treats
+    `start + length` as a contiguous prompt span, and AutoDeploy forwards it
+    as VLM layout metadata.
     """
+    # TODO(TRTLLM-12175): split this into explicit layout fields — per-item
+    # MM-token offsets/lengths, per-item encoder-output embedding counts, and
+    # prompt-position segments or masks for sparse layouts — then retire the
+    # ambiguous `multimodal_lengths` contract.
 
     multimodal_uuids: Optional[List[Optional[str]]] = None
     """Optional user-provided UUIDs for multimodal data items.
@@ -135,9 +136,9 @@ class MultimodalInput:
 
 @dataclass
 class MultimodalRuntimeData:
-    """Runtime data for tracking multimodal embed caching and reuse per request sequence.
+    """Runtime data for tracking multimodal embedding caching and reuse per request sequence.
 
-    Constructed from ``py_multimodal_data["multimodal_embed_mask_cumsum"]``
+    Constructed from `py_multimodal_data["multimodal_embed_mask_cumsum"]`
     (int64 CPU cumsum populated by the producer); counts are derived via
     three O(1) cumsum lookups. Handles non-contiguous embed positions
     (inline specials, interleaved text) natively.
@@ -801,9 +802,9 @@ _MM_METADATA_ONLY_KEYS = frozenset({
 def _has_mm_payload_keys(py_multimodal_data: Optional[dict]) -> bool:
     """True iff py_multimodal_data contains vision/video/audio content keys.
 
-    Metadata-only payloads (``mrope_config`` on mrope warmup,
-    ``multimodal_embed_mask_cumsum`` alone, ``special_token_offsets`` alone,
-    ``layout_metadata``) return False — those don't carry real MM content
+    Metadata-only payloads (`mrope_config` on mrope warmup,
+    `multimodal_embed_mask_cumsum` alone, `special_token_offsets` alone,
+    `layout_metadata`) return False — those don't carry real MM content
     that the model needs to fuse embeddings for.
     """
     if not py_multimodal_data:
@@ -822,17 +823,19 @@ def require_mm_embed_cumsum_if_needed(
 ) -> None:
     """Raise iff this iteration is partial AND MM data is present without embed cumsum.
 
-    A partial iteration is one where either:
-      * ``begin_compute > 0`` — a prefix was reused from KV cache, OR
-      * ``end_compute < prompt_len`` — the scheduler chose to chunk.
+    "Partial" covers the two cases where the scheduler advances less than the
+    whole prompt in one step:
+      * `begin_compute > 0` — KV-cache reuse: a prefix was served from cache, OR
+      * `end_compute < prompt_len` — chunked prefill: the scheduler split the
+        remaining tokens across iterations.
 
-    Partial iterations require ``multimodal_embed_mask_cumsum`` to derive
-    per-chunk embed counts in ``MultimodalRuntimeData``. Full-prefill,
-    no-reuse iterations don't: ``MultimodalRuntimeData`` stays ``None`` and
-    ``find_input_mm_embeds`` handles the full payload.
+    Both cases require `multimodal_embed_mask_cumsum` to derive per-chunk
+    embed counts in `MultimodalRuntimeData`. Full-prefill, no-reuse
+    iterations don't: `MultimodalRuntimeData` stays `None` and
+    `find_input_mm_embeds` handles the full payload.
 
     When the cumsum is missing on a non-partial iteration, log a one-shot
-    warning via ``logger.warning_once`` and proceed.
+    warning via `logger.warning_once` and proceed.
     """
     assert 0 <= begin_compute <= end_compute <= prompt_len, (
         f"invalid window: {begin_compute}..{end_compute}/{prompt_len}")
@@ -868,9 +871,9 @@ def _as_tensor(
     """Coerce input_ids to a torch.Tensor without copying when possible.
 
     Does NOT reshape to 1D or cast to long — callers are responsible for
-    those invariants if they matter. Equivalent to ``torch.as_tensor`` for
-    tensor/ndarray inputs; falls back to ``torch.tensor`` for list inputs
-    (which defaults to ``torch.long`` for Python ints).
+    those invariants if they matter. Equivalent to `torch.as_tensor` for
+    tensor/ndarray inputs; falls back to `torch.tensor` for list inputs
+    (which defaults to `torch.long` for Python ints).
     """
     if isinstance(input_ids, torch.Tensor):
         return input_ids
@@ -887,21 +890,21 @@ def _compute_mm_masks(
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """Compute MM masks in a single pass.
 
-    Returns ``(mm_mask, embed_mask, special_mask)`` where:
-      - ``mm_mask[i]`` is True iff position i is any MM token (embed slot OR special)
-      - ``embed_mask[i]`` is True iff position i is an embed slot (specials excluded)
-      - ``special_mask[i]`` is True iff position i is a special (None when
-        ``mm_special_token_ids`` is not provided)
+    Returns `(mm_mask, embed_mask, special_mask)` where:
+      - `mm_mask[i]` is True iff position i is any MM token (embed slot OR special)
+      - `embed_mask[i]` is True iff position i is an embed slot (specials excluded)
+      - `special_mask[i]` is True iff position i is a special (None when
+        `mm_special_token_ids` is not provided)
 
-    At least one of ``vocab_size`` or ``mm_token_ids`` must be provided; if
-    both, ``mm_token_ids`` takes precedence (matching legacy behavior).
+    At least one of `vocab_size` or `mm_token_ids` must be provided; if
+    both, `mm_token_ids` takes precedence (matching legacy behavior).
 
-    Example: ``input_ids=[1, 5, 5, 6, 5, 7, 2]``,
-    ``mm_token_ids=[5]``, ``mm_special_token_ids=[6, 7]`` gives
-    ``embed_mask=[F, T, T, F, T, F, F]`` and
-    ``mm_mask=[F, T, T, T, T, T, F]``.
+    Example: `input_ids=[1, 5, 5, 6, 5, 7, 2]`,
+    `mm_token_ids=[5]`, `mm_special_token_ids=[6, 7]` gives
+    `embed_mask=[F, T, T, F, T, F, F]` and
+    `mm_mask=[F, T, T, T, T, T, F]`.
 
-    Each call performs at most two full-sequence ``isin`` scans — one for
+    Each call performs at most two full-sequence `isin` scans — one for
     regular MM tokens and one for specials — and reuses them to derive all
     three masks. Callers that need multiple masks should share one invocation
     rather than recomputing predicates.
@@ -955,9 +958,9 @@ def _find_mm_token_start_pos_from_masks(
         start_positions: Indices where each logical MM unit starts.
         start_special_token_positions: Indices (within MM tokens) of special tokens.
 
-    Example: if MM prompt positions are ``[1, 2, 3, 4, 5]`` and prompt
-    positions ``[3, 5]`` are special, returns ``start_positions=[1]`` and
-    ``start_special_token_positions=[2, 4]``.
+    Example: if MM prompt positions are `[1, 2, 3, 4, 5]` and prompt
+    positions `[3, 5]` are special, returns `start_positions=[1]` and
+    `start_special_token_positions=[2, 4]`.
     """
     if not torch.any(mm_mask):
         return [], []

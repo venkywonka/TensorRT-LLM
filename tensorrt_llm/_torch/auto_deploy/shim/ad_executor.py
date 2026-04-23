@@ -422,7 +422,7 @@ def maybe_pad_for_cuda_graph(func):
 class ADEngine(ModelEngine):
     """The AutoDeploy Engine (ADEngine) is the main engine interface to execute AutoDeploy models.
 
-    It follows the ``ModelEngine`` abstractions and is responsible for building the ad-optimized
+    It follows the `ModelEngine` abstractions and is responsible for building the ad-optimized
     model, converting TRT-LLM scheduled requests into ad-native (pytorch-native) inputs, running
     the model, and returning correctly formatted logits.
     """

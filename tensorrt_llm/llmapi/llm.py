@@ -710,7 +710,7 @@ class BaseLLM:
 
         Returns:
             tensorrt_llm.llmapi.llm.PreprocessedInputs: A preprocessed-inputs object that can be
-                passed directly to :meth:`generate_async` as ``inputs``.
+                passed directly to :meth:`generate_async` as `inputs`.
         """
         sampling_params = self._prepare_sampling_params(sampling_params)
         prompt_token_ids, _prompt, query_token_ids, multimodal_params = (

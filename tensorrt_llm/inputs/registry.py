@@ -240,9 +240,9 @@ class BaseMultimodalInputProcessor(ABC):
     def get_mm_token_ids(self) -> Optional[Tensor]:
         """Token IDs for a logical multimodal unit; include framing tokens for one contiguous span per unit.
 
-        Framing tokens must also be in ``get_mm_special_token_ids``. Example (Mistral):
-        ``[IMG][IMG][IMG_BREAK][IMG][IMG][IMG_END]`` → ``{IMG, IMG_BREAK, IMG_END}``
-        = 1 span; ``{IMG}`` alone fragments into 3.
+        Framing tokens must also be in `get_mm_special_token_ids`. Example (Mistral):
+        `[IMG][IMG][IMG_BREAK][IMG][IMG][IMG_END]` → `{IMG, IMG_BREAK, IMG_END}`
+        = 1 span; `{IMG}` alone fragments into 3.
         Return value is a 1-D tensor of token IDs; these are token values, not
         prompt positions or per-image counts.
         """
@@ -258,8 +258,8 @@ class BaseMultimodalInputProcessor(ABC):
     def get_mm_special_token_ids(self) -> Optional[Tensor]:
         """IDs for in-prompt framing tokens inside a multimodal unit that carry no vision embedding.
 
-        Found in e.g. Mistral3/LLaMA4 (``image_break``, ``image_end``). Example: for
-        ``[IMG][IMG][IMG_BREAK][IMG][IMG][IMG_END]`` return ``{IMG_BREAK, IMG_END}``
+        Found in e.g. Mistral3/LLaMA4 (`image_break`, `image_end`). Example: for
+        `[IMG][IMG][IMG_BREAK][IMG][IMG][IMG_END]` return `{IMG_BREAK, IMG_END}`
         — subtracted from the embed mask so embed-slot count stays accurate.
         Return value is a 1-D tensor of token IDs; these tokens are excluded
         from the embedding-row mask.
@@ -754,16 +754,16 @@ def compute_mm_embed_cumsum_if_absent(
     extra_processed_inputs: Optional[ExtraProcessedInputs],
     input_processor: BaseMultimodalInputProcessor,
 ) -> None:
-    """Ensure ``multimodal_embed_mask_cumsum`` is present in ``extra_processed_inputs``.
+    """Ensure `multimodal_embed_mask_cumsum` is present in `extra_processed_inputs`.
 
     Idempotent: no-op when the cumsum is already populated. Otherwise
-    classifies every prompt position via the processor's ``mm_token_ids`` /
-    ``vocab_size`` predicate (with specials subtracted), takes the int64
-    prefix sum, and stores the flat ``int64[prompt_len]`` tensor at
-    ``extra_processed_inputs["multimodal_data"]["multimodal_embed_mask_cumsum"]``.
+    classifies every prompt position via the processor's `mm_token_ids` /
+    `vocab_size` predicate (with specials subtracted), takes the int64
+    prefix sum, and stores the flat `int64[prompt_len]` tensor at
+    `extra_processed_inputs["multimodal_data"]["multimodal_embed_mask_cumsum"]`.
 
-    Silently skipped if the processor provides neither ``vocab_size`` nor
-    ``mm_token_ids``.
+    Silently skipped if the processor provides neither `vocab_size` nor
+    `mm_token_ids`.
     """
     if extra_processed_inputs is None:
         return

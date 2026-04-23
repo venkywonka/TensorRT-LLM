@@ -915,7 +915,7 @@ class KVCacheManager(BaseResourceManager):
         HF config layer count differs from runtime), it is used directly
         without PP distribution.  Otherwise the layer count is derived from
         the model config and distributed evenly across PP ranks via
-        ``mapping.pp_layers``.
+        `mapping.pp_layers`.
         """
         if num_layers is not None:
             return max(num_layers, 1)

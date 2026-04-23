@@ -646,7 +646,7 @@ def _find_mm_token_start_positions(input_ids,
 
     Kept as a local test-file helper rather than a production wrapper since
     the composition is not used outside tests — production call sites in
-    ``multimodal_hashing_process`` use the masks emitted by ``_compute_mm_masks``
+    `multimodal_hashing_process` use the masks emitted by `_compute_mm_masks`
     for purposes other than just position-finding (e.g., stashing the embed
     mask), so a single-purpose wrapper would be strictly worse for them.
     """
@@ -661,9 +661,9 @@ def _find_mm_token_start_positions(input_ids,
 
 class TestFindMmTokenStartPositions:
     """Integration tests for the intake position-finding composition:
-    ``_compute_mm_masks`` + ``_find_mm_token_start_pos_from_masks``.
-    Verifies the 2-tuple ``(start_positions, special_positions)`` returned
-    by composing the two helpers via ``_find_mm_token_start_positions``."""
+    `_compute_mm_masks` + `_find_mm_token_start_pos_from_masks`.
+    Verifies the 2-tuple `(start_positions, special_positions)` returned
+    by composing the two helpers via `_find_mm_token_start_positions`."""
 
     def test_early_return_no_mm_tokens(self):
         """When input has no MM tokens, should return two empty lists."""
@@ -772,7 +772,7 @@ class _MockProcessor:
 
 class TestComputeMmEmbedCumsumIfAbsent:
     """Test cases for compute_mm_embed_cumsum_if_absent — emits a flat int64
-    cumsum tensor at ``extra["multimodal_data"]["multimodal_embed_mask_cumsum"]``."""
+    cumsum tensor at `extra["multimodal_data"]["multimodal_embed_mask_cumsum"]`."""
 
     def test_none_extra_is_noop(self):
         """No crash when extra_processed_inputs is None."""
