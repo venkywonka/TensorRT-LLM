@@ -33,30 +33,21 @@ class MultimodalInput:
     """Prompt position of each logical unit's first MM token."""
 
     multimodal_lengths: List[int]
-    """Per-unit MM-token count = encoder-row count for that unit. Does NOT
-    include interleaved non-MM text, so this is not a bounding-box span when
-    a unit's MM tokens are non-contiguous.
+    """Per logical unit count of prompt-side MM tokens.
 
-    This dual-role field is consumed by (a) Python encoder-row splitters
-    (``_torch/pyexecutor/llm_request.py::PyResult.append_mm_embeddings``,
-    ``_torch/pyexecutor/model_engine.py::_forward_step_mm_encoder_only``,
-    and ``_torch/pyexecutor/sampler.py`` which forwards to the former)
-    which need the MM-token/encoder-row count, and (b) the C++ KV-cache
-    key hasher (``cpp/tensorrt_llm/batch_manager/blockKey.cpp``) which
-    treats ``startPos + length`` as an outer bounding-box and checks
-    block overlap against it. Those two semantics only agree when a
-    logical unit's MM tokens are contiguous. For non-contiguous units,
-    any KV block whose ``startTokenIdx >= startPos + length`` fails the
-    overlap check even when it still sits inside the unit's outer span —
-    the unit's ``mmHash`` is not folded into that block's key, so two
-    distinct images sharing identical prompt-tail text can collide in
-    the KV cache. Pre-existing latent limitation, unchanged by the
-    embed-mask refactor. Resolving this requires either adding a
-    separate ``multimodal_outer_lengths`` field fed to the C++ binding,
-    or teaching the C++ hasher to read the flat embed mask.
+    This counts prompt positions where ``mm_mask = embed_mask | special_mask``
+    is true. It includes MM special/framing tokens and excludes ordinary
+    interleaved text, so it is not a bounding-box span for sparse layouts and
+    is not always the number of encoder embedding rows.
 
-    TODO(TRTLLM-12143): fix non-contiguous-unit KV-cache key
-    under-coverage. See https://jirasw.nvidia.com/browse/TRTLLM-12143.
+    Current consumers overload this value: encoder-only split paths use it as
+    an embedding row count, the C++ KV hasher treats ``start + length`` as a
+    contiguous prompt span, and AutoDeploy forwards it as VLM layout metadata.
+
+    TODO(TRTLLM-12175): split this into explicit layout fields, such as
+    per-item MM-token offsets/lengths, per-item embedding row lengths, and
+    prompt-position segments or masks for sparse layouts. Once those fields
+    are plumbed, remove the ambiguous ``multimodal_lengths`` contract.
     """
 
     multimodal_uuids: Optional[List[Optional[str]]] = None

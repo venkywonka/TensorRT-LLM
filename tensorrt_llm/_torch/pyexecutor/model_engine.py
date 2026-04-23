@@ -3948,6 +3948,9 @@ class PyTorchModelEngine(ModelEngine):
         if not multimodal_params or len(multimodal_params) == 0:
             # Return empty embeddings if no multimodal data
             return {'mm_embeddings': []}
+        # TODO(TRTLLM-12175): split encoder outputs by explicit per-request
+        # embed lengths once they are plumbed. multimodal_lengths is a
+        # prompt-side MM-token count and can include MM specials.
         if getattr(scheduled_requests.context_requests[0], 'multimodal_lengths',
                    None) is None:
             multimodal_chunks = None
