@@ -682,7 +682,7 @@ class ADEngine(ModelEngine):
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,
                 chunk_end_pos=end_compute,
-                embed_mask_cumsum=flat_cumsum.to(device="cpu"),
+                embed_mask_cumsum=flat_cumsum,
             )
             flat_start_list.append(cumsum_total_mm + runtime.num_cached_mm_tokens)
             count_list.append(runtime.num_mm_tokens_in_chunk)

@@ -2317,7 +2317,7 @@ class PyTorchModelEngine(ModelEngine):
             py_multimodal_runtime = None
             if cumsum is not None:
                 py_multimodal_runtime = MultimodalRuntimeData(
-                    embed_mask_cumsum=cumsum.to(device="cpu"),
+                    embed_mask_cumsum=cumsum,
                     past_seen_token_num=past_seen_token_num,
                     chunk_end_pos=end_compute,
                 )

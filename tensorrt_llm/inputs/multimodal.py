@@ -190,6 +190,14 @@ class MultimodalRuntimeData:
         self.total_embeds_in_request = int(cs[-1])
 
 
+# Keys under `MultimodalParams.multimodal_data` that are CPU-resident metadata
+# and must never be moved to GPU by `MultimodalParams.to_device`.
+# Extend only after auditing each key's consumers.
+_CPU_ONLY_MULTIMODAL_DATA_KEYS = frozenset({
+    "multimodal_embed_mask_cumsum",
+})
+
+
 @dataclass
 class MultimodalParams:
     """Unified container for multimodal parameters.
@@ -316,7 +324,14 @@ class MultimodalParams:
                         f"Failed to restore tensor from shared tensor dict: {e}"
                     )
             else:
-                # Regular dictionary - recursively process values
+                # Regular dictionary - recursively process values.
+                if operation == "to_device":
+                    return {
+                        key: (value if key in _CPU_ONLY_MULTIMODAL_DATA_KEYS
+                              else self._apply_tensor_operation(
+                                  value, operation, **kwargs))
+                        for key, value in input_data.items()
+                    }
                 return {
                     key: self._apply_tensor_operation(value, operation,
                                                       **kwargs)
@@ -481,6 +496,14 @@ class MultimodalParams:
             else:
                 # Check if the target key exists and move it to device
                 if isinstance(current, dict) and target_key in current:
+                    if target_key in _CPU_ONLY_MULTIMODAL_DATA_KEYS:
+                        logger.warning_once(
+                            "to_device('%s') skipped: key is CPU-only "
+                            "multimodal metadata.",
+                            keyword_path,
+                            key="mm_cpu_only_skip",
+                        )
+                        continue
                     current[target_key] = self._apply_tensor_operation(
                         current[target_key],
                         "to_device",
