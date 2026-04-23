@@ -678,6 +678,10 @@ class ADEngine(ModelEngine):
                 count_list.append(0)
                 continue
 
+            assert flat_mask.numel() == len(all_prompt_tokens), (
+                f"multimodal_embed_mask length ({flat_mask.numel()}) must "
+                f"equal prompt length ({len(all_prompt_tokens)}) for request {i}"
+            )
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,
                 chunk_end_pos=end_compute,

@@ -205,6 +205,19 @@ def _locate_accepted_draft_tokens(requests: List[LlmRequest]):
     return num_accepted_draft_tokens_offset, accepted_draft_tokens_indices, rewind_draft_token_separate_adjustments
 
 
+# M-RoPE (Multimodal Rotary Position Embedding, used by Qwen2-VL / Qwen3-VL)
+# encodes positions along three axes: (temporal, height, width). The tensor
+# layout everywhere in TRT-LLM is (num_axes, batch, seq_len).
+_MROPE_NUM_AXES = 3
+
+
+def _make_warmup_mrope_position_ids(token_num: int) -> torch.Tensor:
+    """Build (_MROPE_NUM_AXES, 1, token_num) mrope_position_ids for warmup."""
+    return (torch.arange(0, token_num,
+                         dtype=torch.int32).expand(_MROPE_NUM_AXES, 1,
+                                                   -1).clone())
+
+
 def _populate_dummy_mrope_config(req: LlmRequest, token_num: int,
                                  is_gen: bool) -> None:
     """Attach a dummy mrope_config to a warmup request's py_multimodal_data.
@@ -217,8 +230,7 @@ def _populate_dummy_mrope_config(req: LlmRequest, token_num: int,
     workaround.
     """
     mrope_config: Dict[str, torch.Tensor] = {
-        "mrope_position_ids":
-        torch.arange(0, token_num, dtype=torch.int32).expand(3, 1, -1).clone(),
+        "mrope_position_ids": _make_warmup_mrope_position_ids(token_num),
     }
     if is_gen:
         mrope_config["mrope_position_deltas"] = torch.zeros(
