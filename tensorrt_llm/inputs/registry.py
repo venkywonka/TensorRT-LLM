@@ -749,18 +749,18 @@ def _get_single_mm_token_lengths(
     return num_mm_tokens
 
 
-def compute_mm_embed_mask_if_absent(
+def compute_mm_embed_cumsum_if_absent(
     prompt_token_ids: List[int],
     extra_processed_inputs: Optional[ExtraProcessedInputs],
     input_processor: BaseMultimodalInputProcessor,
 ) -> None:
-    """Ensure ``multimodal_embed_mask`` is present in ``extra_processed_inputs``.
+    """Ensure ``multimodal_embed_mask_cumsum`` is present in ``extra_processed_inputs``.
 
-    Idempotent: no-op when the mask is already populated. Otherwise classifies
-    every prompt position via the processor's ``mm_token_ids`` /
-    ``vocab_size`` predicate (with specials subtracted) and stores the flat
-    ``bool[prompt_len]`` tensor at
-    ``extra_processed_inputs["multimodal_data"]["multimodal_embed_mask"]``.
+    Idempotent: no-op when the cumsum is already populated. Otherwise
+    classifies every prompt position via the processor's ``mm_token_ids`` /
+    ``vocab_size`` predicate (with specials subtracted), takes the int64
+    prefix sum, and stores the flat ``int64[prompt_len]`` tensor at
+    ``extra_processed_inputs["multimodal_data"]["multimodal_embed_mask_cumsum"]``.
 
     Silently skipped if the processor provides neither ``vocab_size`` nor
     ``mm_token_ids``.
@@ -770,15 +770,15 @@ def compute_mm_embed_mask_if_absent(
     mm_data = extra_processed_inputs.get("multimodal_data")
     if mm_data is None:
         return
-    if "multimodal_embed_mask" in mm_data:
+    if "multimodal_embed_mask_cumsum" in mm_data:
         return
 
     vocab_size = input_processor.get_vocab_size()
     mm_token_ids = input_processor.get_mm_token_ids()
     if vocab_size is None and mm_token_ids is None:
         logger.debug(
-            "compute_mm_embed_mask_if_absent: processor provides neither "
-            "vocab_size nor mm_token_ids — skipping mask computation.")
+            "compute_mm_embed_cumsum_if_absent: processor provides neither "
+            "vocab_size nor mm_token_ids — skipping cumsum computation.")
         return
 
     input_ids = _as_tensor(prompt_token_ids)
@@ -788,7 +788,6 @@ def compute_mm_embed_mask_if_absent(
         mm_token_ids=mm_token_ids,
         mm_special_token_ids=input_processor.get_mm_special_token_ids(),
     )
-    mm_data["multimodal_embed_mask"] = embed_mask
     # Cache the int64 cumsum; request-invariant, read once per chunk.
     mm_data["multimodal_embed_mask_cumsum"] = embed_mask.to(
         torch.int64).cumsum(0)
@@ -926,8 +925,8 @@ def create_input_processor_with_hash(
                 "Cannot locate vocab_size or mm_token_ids for multimodal token preprocessing"
             )
         # Compute all three masks once here and reuse downstream. The embed
-        # mask is stashed into extra_processed_inputs so the wrapper's
-        # subsequent compute_mm_embed_mask_if_absent call short-circuits via
+        # cumsum is stashed into extra_processed_inputs so the wrapper's
+        # subsequent compute_mm_embed_cumsum_if_absent call short-circuits via
         # its idempotency guard, avoiding a second full-sequence isin pass.
         input_ids_tensor = _as_tensor(prompt_token_ids)
         if input_ids_tensor.numel() == 0:
@@ -939,8 +938,6 @@ def create_input_processor_with_hash(
                 mm_token_ids=mm_ids,
                 mm_special_token_ids=mm_special_token_ids,
             )
-            extra_processed_inputs["multimodal_data"].setdefault(
-                "multimodal_embed_mask", embed_mask)
             extra_processed_inputs["multimodal_data"].setdefault(
                 "multimodal_embed_mask_cumsum",
                 embed_mask.to(torch.int64).cumsum(0))
@@ -1006,9 +1003,9 @@ def create_input_processor_with_hash(
                 # Hashing emits MultimodalInput but not the embed mask; populate
                 # it here so partial-iteration consumers (chunked prefill,
                 # KV-cache reuse) have what they need.
-                compute_mm_embed_mask_if_absent(prompt_token_ids,
-                                                extra_processed_inputs,
-                                                input_processor)
+                compute_mm_embed_cumsum_if_absent(prompt_token_ids,
+                                                  extra_processed_inputs,
+                                                  input_processor)
                 return prompt_token_ids, extra_processed_inputs
             except Exception as e:
                 logger.warning(f"Multimodal hashing failed: {e}.")
@@ -1020,9 +1017,9 @@ def create_input_processor_with_hash(
                     try:
                         prompt_token_ids, extra_processed_inputs = input_processor(
                             inputs, sampling_params)
-                        compute_mm_embed_mask_if_absent(prompt_token_ids,
-                                                        extra_processed_inputs,
-                                                        input_processor)
+                        compute_mm_embed_cumsum_if_absent(
+                            prompt_token_ids, extra_processed_inputs,
+                            input_processor)
                         return prompt_token_ids, extra_processed_inputs
                     except Exception as e2:
                         logger.warning(f"Basic input processor failed: {e}.")
@@ -1034,9 +1031,9 @@ def create_input_processor_with_hash(
             try:
                 prompt_token_ids, extra_processed_inputs = input_processor(
                     inputs, sampling_params)
-                compute_mm_embed_mask_if_absent(prompt_token_ids,
-                                                extra_processed_inputs,
-                                                input_processor)
+                compute_mm_embed_cumsum_if_absent(prompt_token_ids,
+                                                  extra_processed_inputs,
+                                                  input_processor)
                 return prompt_token_ids, extra_processed_inputs
             except Exception as e:
                 logger.warning(f"Basic input processor failed: {e}.")

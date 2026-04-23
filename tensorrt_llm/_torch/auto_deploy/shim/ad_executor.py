@@ -37,7 +37,7 @@ from tensorrt_llm._torch.pyexecutor.seq_slot_manager import SeqSlotManager
 from tensorrt_llm._torch.speculative import get_spec_drafter
 from tensorrt_llm._torch.speculative.eagle3 import Eagle3OneModelSampler, Eagle3ResourceManager
 from tensorrt_llm._utils import nvtx_range
-from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData, require_mm_embed_mask_if_needed
+from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData, require_mm_embed_cumsum_if_needed
 from tensorrt_llm.llmapi.llm_args import (
     ContextChunkingPolicy,
     EagleDecodingConfig,
@@ -83,7 +83,7 @@ _RESERVED_MM_DATA_KEYS = frozenset(
     {
         "layout_metadata",
         "special_token_offsets",
-        "multimodal_embed_mask",
+        "multimodal_embed_mask_cumsum",
     }
 )
 
@@ -645,10 +645,9 @@ class ADEngine(ModelEngine):
             mm_token_lengths_flat.extend(mm_len_list)
 
             mm_data = req.py_multimodal_data or {}
-            flat_mask = mm_data.get("multimodal_embed_mask")
             flat_cumsum = mm_data.get("multimodal_embed_mask_cumsum")
             # special_token_offsets indices into the dense MM-token-list (which includes both embeds and specials).
-            # It does not index into the prompt-position-indexed flat_mask.
+            # It does not index into the prompt-position-indexed cumsum.
             special_offsets = list(
                 mm_data.get("special_token_offsets")
                 or (layout_metadata or {}).get("special_token_offsets", [])
@@ -664,24 +663,22 @@ class ADEngine(ModelEngine):
                 continue
 
             all_prompt_tokens = req.get_tokens(0)
-            require_mm_embed_mask_if_needed(
+            require_mm_embed_cumsum_if_needed(
                 req.py_multimodal_data,
                 begin_compute=begin_compute,
                 end_compute=end_compute,
                 prompt_len=len(all_prompt_tokens),
             )
-            if flat_mask is None:
+            if flat_cumsum is None:
                 # Leave flat_start / count at 0 so concatenated cursors don't advance.
                 flat_start_list.append(0)
                 count_list.append(0)
                 continue
 
-            assert flat_mask.numel() == len(all_prompt_tokens), (
-                f"embed_mask length {flat_mask.numel()} != prompt length "
+            assert flat_cumsum.numel() == len(all_prompt_tokens), (
+                f"embed_mask_cumsum length {flat_cumsum.numel()} != prompt length "
                 f"{len(all_prompt_tokens)} for request {i}"
             )
-            if flat_cumsum is None:
-                flat_cumsum = flat_mask.to(torch.int64).cumsum(0)
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,
                 chunk_end_pos=end_compute,

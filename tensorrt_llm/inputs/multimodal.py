@@ -137,11 +137,10 @@ class MultimodalInput:
 class MultimodalRuntimeData:
     """Runtime data for tracking multimodal embed caching and reuse per request sequence.
 
-    Constructed from the per-request int64 cumsum of ``py_multimodal_data
-    ["multimodal_embed_mask"]`` (cached at producer time as
-    ``py_multimodal_data["multimodal_embed_mask_cumsum"]``); counts are
-    derived via three O(1) cumsum lookups. Handles non-contiguous embed
-    positions (inline specials, interleaved text) natively.
+    Constructed from ``py_multimodal_data["multimodal_embed_mask_cumsum"]``
+    (int64 CPU cumsum populated by the producer); counts are derived via
+    three O(1) cumsum lookups. Handles non-contiguous embed positions
+    (inline specials, interleaved text) natively.
 
     Attributes:
         past_seen_token_num: Total tokens already processed in previous iterations (cached)
@@ -790,10 +789,9 @@ def find_mm_token_lengths(
 # Keys in py_multimodal_data that carry metadata (not vision/audio content).
 # If py_multimodal_data has ONLY these keys, the request has no real MM
 # payload (e.g. mrope-only warmup on an mrope-enabled model) and the
-# require_mm_embed_mask_if_needed gate short-circuits.
+# require_mm_embed_cumsum_if_needed gate short-circuits.
 _MM_METADATA_ONLY_KEYS = frozenset({
     "mrope_config",
-    "multimodal_embed_mask",
     "multimodal_embed_mask_cumsum",
     "special_token_offsets",
     "layout_metadata",
@@ -804,7 +802,7 @@ def _has_mm_payload_keys(py_multimodal_data: Optional[dict]) -> bool:
     """True iff py_multimodal_data contains vision/video/audio content keys.
 
     Metadata-only payloads (``mrope_config`` on mrope warmup,
-    ``multimodal_embed_mask`` alone, ``special_token_offsets`` alone,
+    ``multimodal_embed_mask_cumsum`` alone, ``special_token_offsets`` alone,
     ``layout_metadata``) return False — those don't carry real MM content
     that the model needs to fuse embeddings for.
     """
@@ -815,32 +813,32 @@ def _has_mm_payload_keys(py_multimodal_data: Optional[dict]) -> bool:
 
 # TODO(TRTLLM-11951): fold this gate into MultimodalRuntimeData.__post_init__
 # so new call sites cannot forget to invoke it (see PR #12944 review).
-def require_mm_embed_mask_if_needed(
+def require_mm_embed_cumsum_if_needed(
     py_multimodal_data: Optional[dict],
     *,
     begin_compute: int,
     end_compute: int,
     prompt_len: int,
 ) -> None:
-    """Raise iff this iteration is partial AND MM data is present without embed mask.
+    """Raise iff this iteration is partial AND MM data is present without embed cumsum.
 
     A partial iteration is one where either:
       * ``begin_compute > 0`` — a prefix was reused from KV cache, OR
       * ``end_compute < prompt_len`` — the scheduler chose to chunk.
 
-    Partial iterations require ``multimodal_embed_mask`` to derive per-chunk
-    embed counts in ``MultimodalRuntimeData``. Full-prefill, no-reuse
-    iterations don't: ``MultimodalRuntimeData`` stays ``None`` and
+    Partial iterations require ``multimodal_embed_mask_cumsum`` to derive
+    per-chunk embed counts in ``MultimodalRuntimeData``. Full-prefill,
+    no-reuse iterations don't: ``MultimodalRuntimeData`` stays ``None`` and
     ``find_input_mm_embeds`` handles the full payload.
 
-    When the mask is missing on a non-partial iteration, log a one-shot
+    When the cumsum is missing on a non-partial iteration, log a one-shot
     warning via ``logger.warning_once`` and proceed.
     """
     assert 0 <= begin_compute <= end_compute <= prompt_len, (
         f"invalid window: {begin_compute}..{end_compute}/{prompt_len}")
     if not _has_mm_payload_keys(py_multimodal_data):
         return
-    if py_multimodal_data.get("multimodal_embed_mask") is not None:
+    if py_multimodal_data.get("multimodal_embed_mask_cumsum") is not None:
         return
 
     is_partial = (begin_compute > 0) or (end_compute < prompt_len)
@@ -848,20 +846,20 @@ def require_mm_embed_mask_if_needed(
 
     if is_partial:
         raise ValueError(
-            f"Request requires multimodal_embed_mask for partial iteration "
+            f"Request requires multimodal_embed_mask_cumsum for partial iteration "
             f"(begin_compute={begin_compute}, end_compute={end_compute}, "
             f"prompt_len={prompt_len}) but py_multimodal_data has keys "
-            f"{mm_keys} with no mask. The input processor may be missing a "
+            f"{mm_keys} with no cumsum. The input processor may be missing a "
             f"discriminator (override get_mm_token_ids or ensure get_vocab_size "
             f"resolves).")
 
     logger.warning_once(
-        "multimodal_embed_mask missing on multimodal request (keys=%s); "
+        "multimodal_embed_mask_cumsum missing on multimodal request (keys=%s); "
         "running without mask-aware accounting. This is fine for full-prefill "
         "iterations but will fail if this request is later chunked or reuses "
         "KV cache.",
         mm_keys,
-        key="mm_embed_mask_missing_non_partial",
+        key="mm_embed_cumsum_missing_non_partial",
     )
 
 

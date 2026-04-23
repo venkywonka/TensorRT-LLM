@@ -10,7 +10,7 @@ from tensorrt_llm.inputs.multimodal import (MultimodalParams,
                                             MultimodalRuntimeData, _as_tensor,
                                             _compute_mm_masks,
                                             _find_mm_token_start_pos_from_masks)
-from tensorrt_llm.inputs.registry import compute_mm_embed_mask_if_absent
+from tensorrt_llm.inputs.registry import compute_mm_embed_cumsum_if_absent
 
 # Embedding dim kept small — functions under test only index along dim 0.
 _EMBED_DIM = 4
@@ -750,7 +750,7 @@ class TestFindMmTokenStartPositions:
 
 
 class _MockProcessor:
-    """Minimal mock of BaseMultimodalInputProcessor for compute_mm_embed_mask_if_absent tests."""
+    """Minimal mock of BaseMultimodalInputProcessor for compute_mm_embed_cumsum_if_absent tests."""
 
     def __init__(self,
                  vocab_size=100,
@@ -770,65 +770,72 @@ class _MockProcessor:
         return self._mm_special_token_ids
 
 
-class TestComputeMmEmbedMaskIfAbsent:
-    """Test cases for compute_mm_embed_mask_if_absent — emits a flat bool
-    tensor at ``extra["multimodal_data"]["multimodal_embed_mask"]``."""
+class TestComputeMmEmbedCumsumIfAbsent:
+    """Test cases for compute_mm_embed_cumsum_if_absent — emits a flat int64
+    cumsum tensor at ``extra["multimodal_data"]["multimodal_embed_mask_cumsum"]``."""
 
     def test_none_extra_is_noop(self):
         """No crash when extra_processed_inputs is None."""
-        compute_mm_embed_mask_if_absent([1, 2, 3], None, _MockProcessor())
+        compute_mm_embed_cumsum_if_absent([1, 2, 3], None, _MockProcessor())
 
     def test_no_multimodal_data_key_is_noop(self):
         """No crash when multimodal_data key is absent."""
         extra = {"some_other_key": {}}
-        compute_mm_embed_mask_if_absent([1, 2, 3], extra, _MockProcessor())
-        assert "multimodal_embed_mask" not in extra
+        compute_mm_embed_cumsum_if_absent([1, 2, 3], extra, _MockProcessor())
+        assert "multimodal_embed_mask_cumsum" not in extra
 
     def test_already_present_is_idempotent(self):
-        """Existing mask is NOT overwritten."""
-        original_mask = torch.tensor([True, True, True, True, True])
-        extra = {"multimodal_data": {"multimodal_embed_mask": original_mask}}
-        compute_mm_embed_mask_if_absent([100, 101, 102, 103, 104], extra,
-                                        _MockProcessor(vocab_size=100))
-        assert (extra["multimodal_data"]["multimodal_embed_mask"]
-                is original_mask)
+        """Existing cumsum is NOT overwritten."""
+        original_cumsum = torch.tensor([1, 2, 3, 4, 5], dtype=torch.int64)
+        extra = {
+            "multimodal_data": {
+                "multimodal_embed_mask_cumsum": original_cumsum
+            }
+        }
+        compute_mm_embed_cumsum_if_absent([100, 101, 102, 103, 104], extra,
+                                          _MockProcessor(vocab_size=100))
+        assert (extra["multimodal_data"]["multimodal_embed_mask_cumsum"]
+                is original_cumsum)
 
     def test_computes_mask_when_absent(self):
-        """Flat bool mask computed from token IDs when not already present."""
+        """Flat int64 cumsum computed from token IDs when not already present."""
         extra = {"multimodal_data": {"multimodal_embedding": "placeholder"}}
         # input: [1, 100, 101, 2, 102] → ids >= vocab_size=100 are mm.
-        compute_mm_embed_mask_if_absent([1, 100, 101, 2, 102], extra,
-                                        _MockProcessor(vocab_size=100))
-        mask = extra["multimodal_data"]["multimodal_embed_mask"]
-        assert torch.equal(mask, torch.tensor([False, True, True, False, True]))
+        # bool mask: [F, T, T, F, T] → cumsum: [0, 1, 2, 2, 3]
+        compute_mm_embed_cumsum_if_absent([1, 100, 101, 2, 102], extra,
+                                          _MockProcessor(vocab_size=100))
+        cumsum = extra["multimodal_data"]["multimodal_embed_mask_cumsum"]
+        assert torch.equal(cumsum,
+                           torch.tensor([0, 1, 2, 2, 3], dtype=torch.int64))
 
     def test_no_mm_tokens_stores_all_false(self):
-        """When no MM tokens match, stores an all-False flat mask."""
+        """When no MM tokens match, stores an all-zero flat cumsum."""
         extra = {"multimodal_data": {"some_key": "value"}}
-        compute_mm_embed_mask_if_absent([1, 2, 3], extra,
-                                        _MockProcessor(vocab_size=100))
-        mask = extra["multimodal_data"]["multimodal_embed_mask"]
-        assert torch.equal(mask, torch.tensor([False, False, False]))
+        compute_mm_embed_cumsum_if_absent([1, 2, 3], extra,
+                                          _MockProcessor(vocab_size=100))
+        cumsum = extra["multimodal_data"]["multimodal_embed_mask_cumsum"]
+        assert torch.equal(cumsum, torch.tensor([0, 0, 0], dtype=torch.int64))
 
     def test_mask_excludes_special_tokens(self):
-        """Specials are False in the flat mask."""
+        """Specials do not increment the cumsum."""
         proc = _MockProcessor(vocab_size=None,
                               mm_token_ids=torch.tensor([50, 60]),
                               mm_special_token_ids=torch.tensor([60]))
         extra = {"multimodal_data": {"embed": "x"}}
         # input: [1, 50, 60, 50, 2] → mm at positions 1,3; special at 2.
-        compute_mm_embed_mask_if_absent([1, 50, 60, 50, 2], extra, proc)
-        mask = extra["multimodal_data"]["multimodal_embed_mask"]
-        assert torch.equal(mask, torch.tensor([False, True, False, True,
-                                               False]))
+        # bool mask: [F, T, F, T, F] → cumsum: [0, 1, 1, 2, 2]
+        compute_mm_embed_cumsum_if_absent([1, 50, 60, 50, 2], extra, proc)
+        cumsum = extra["multimodal_data"]["multimodal_embed_mask_cumsum"]
+        assert torch.equal(cumsum,
+                           torch.tensor([0, 1, 1, 2, 2], dtype=torch.int64))
 
     def test_no_vocab_and_no_mm_ids_is_noop(self):
         """When processor provides neither vocab_size nor mm_token_ids, no crash."""
         proc = _MockProcessor(vocab_size=None, mm_token_ids=None)
         extra = {"multimodal_data": {"embed": "x"}}
-        compute_mm_embed_mask_if_absent([100, 101], extra, proc)
-        # Should not have set the mask since we can't identify MM tokens
-        assert "multimodal_embed_mask" not in extra["multimodal_data"]
+        compute_mm_embed_cumsum_if_absent([100, 101], extra, proc)
+        # Should not have set the cumsum since we can't identify MM tokens
+        assert "multimodal_embed_mask_cumsum" not in extra["multimodal_data"]
 
 
 if __name__ == "__main__":

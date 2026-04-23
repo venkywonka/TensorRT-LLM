@@ -8,11 +8,11 @@ import pytest
 import torch
 
 from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData, find_mm_token_lengths
-from tensorrt_llm.inputs.registry import compute_mm_embed_mask_if_absent
+from tensorrt_llm.inputs.registry import compute_mm_embed_cumsum_if_absent
 
 
-def test_compute_mm_embed_mask_if_absent_populates_py_multimodal_data():
-    """Producer writes a flat bool tensor at py_multimodal_data[multimodal_embed_mask]."""
+def test_compute_mm_embed_cumsum_if_absent_populates_py_multimodal_data():
+    """Producer writes a flat int64 cumsum tensor at py_multimodal_data[multimodal_embed_mask_cumsum]."""
 
     class FakeProcessor:
         def get_vocab_size(self):
@@ -27,12 +27,12 @@ def test_compute_mm_embed_mask_if_absent_populates_py_multimodal_data():
     # [text, img, img, special, img, img, img, text]
     prompt_token_ids = [10, 1001, 1002, 2000, 1003, 1004, 1005, 20]
     extra = {"multimodal_data": {}}
-    compute_mm_embed_mask_if_absent(prompt_token_ids, extra, FakeProcessor())
+    compute_mm_embed_cumsum_if_absent(prompt_token_ids, extra, FakeProcessor())
 
-    mask = extra["multimodal_data"]["multimodal_embed_mask"]
+    cumsum = extra["multimodal_data"]["multimodal_embed_mask_cumsum"]
     assert torch.equal(
-        mask,
-        torch.tensor([False, True, True, False, True, True, True, False]),
+        cumsum,
+        torch.tensor([0, 1, 2, 2, 3, 4, 5, 5], dtype=torch.int64),
     )
 
 

@@ -279,7 +279,11 @@ def test_ad_engine_chunked_prefill_stages_multimodal_runtime_metadata():
     req.multimodal_lengths = [4]
     # Flat prompt-length mask: text at [0,1,6,7], embeds at [2..5].
     req.py_multimodal_data = {
-        "multimodal_embed_mask": torch.tensor([False, False, True, True, True, True, False, False]),
+        "multimodal_embed_mask_cumsum": torch.tensor(
+            [False, False, True, True, True, True, False, False]
+        )
+        .to(torch.int64)
+        .cumsum(0),
     }
 
     scheduled_requests = ScheduledRequests()
@@ -381,7 +385,11 @@ def test_ad_engine_stages_mm_chunk_bounds_for_multimodal_block_reuse():
     req.multimodal_lengths = [4]
     # 4-slot unit at positions 2..5, no inline specials.
     req.py_multimodal_data = {
-        "multimodal_embed_mask": torch.tensor([False, False, True, True, True, True, False, False]),
+        "multimodal_embed_mask_cumsum": torch.tensor(
+            [False, False, True, True, True, True, False, False]
+        )
+        .to(torch.int64)
+        .cumsum(0),
     }
 
     scheduled_requests = ScheduledRequests()
@@ -439,9 +447,11 @@ def test_ad_engine_mm_special_offsets_for_non_contiguous_unit():
     req.multimodal_positions = [2]
     req.multimodal_lengths = [5]
     req.py_multimodal_data = {
-        "multimodal_embed_mask": torch.tensor(
+        "multimodal_embed_mask_cumsum": torch.tensor(
             [False, False, True, True, False, False, False, True, True, False, False, False]
-        ),
+        )
+        .to(torch.int64)
+        .cumsum(0),
         "special_token_offsets": [2],
     }
 

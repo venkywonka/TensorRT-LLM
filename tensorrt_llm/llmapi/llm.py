@@ -35,7 +35,7 @@ from ..executor.postproc_worker import PostprocParams
 from ..executor.request import DEFAULT_REQUEST_PRIORITY
 from ..executor.utils import (RequestError, create_mpi_comm_session,
                               get_spawn_proxy_process_env)
-from ..inputs import (PromptInputs, compute_mm_embed_mask_if_absent,
+from ..inputs import (PromptInputs, compute_mm_embed_cumsum_if_absent,
                       create_input_processor, create_input_processor_with_hash,
                       get_cache_salt_id, prompt_inputs)
 from ..logger import logger
@@ -131,8 +131,7 @@ class PreprocessedInputs:
 
 
 class BaseLLM:
-    """
-    The base class for all LLM classes.
+    """The base class for all LLM classes.
     """
 
     def __init__(self,
@@ -225,11 +224,11 @@ class BaseLLM:
             if not self.mpi_session:
                 mpi_process_pre_spawned: bool = get_spawn_proxy_process_env()
                 if not mpi_process_pre_spawned:
-                    logger_debug(f"LLM create MpiPoolSession\n", "yellow")
+                    logger_debug("LLM create MpiPoolSession\n", "yellow")
                     self.mpi_session = MpiPoolSession(
                         n_workers=self.args.parallel_config.world_size)
                 else:
-                    logger_debug(f"LLM create MpiCommSession\n", "yellow")
+                    logger_debug("LLM create MpiCommSession\n", "yellow")
                     self.mpi_session = create_mpi_comm_session(
                         self.args.parallel_config.world_size)
 
@@ -346,6 +345,7 @@ class BaseLLM:
                 Scheduling parameters. Defaults to None.
             cache_salt (str, Sequence[str], optional): If specified, KV cache will be salted with the provided string to limit the kv cache reuse to the requests with the same string. Defaults to None.
             priority (float, List[float]): The scheduling priority for the request(s), in the range [0, 1]. Higher values indicate higher priority. Defaults to 0.5.
+
         Returns:
             Union[tensorrt_llm.llmapi.RequestOutput, List[tensorrt_llm.llmapi.RequestOutput]]: The output data of the completion request to the LLM.
         """
@@ -439,10 +439,10 @@ class BaseLLM:
             scheduling_params (tensorrt_llm.scheduling_params.SchedulingParams, optional): Scheduling parameters. Defaults to None.
             cache_salt (str, optional): If specified, KV cache will be salted with the provided string to limit the kv cache reuse to the requests with the same string. Defaults to None.
             priority (float): The scheduling priority for the request, in the range [0, 1]. Higher values indicate higher priority. Defaults to 0.5.
+
         Returns:
             tensorrt_llm.llmapi.RequestOutput: The output data of the completion request to the LLM.
         """
-
         # Check if the worker is shutting down
         if self._executor is None or self._executor.is_shutdown():
             raise RuntimeError("LLM is shutting down")
@@ -591,9 +591,9 @@ class BaseLLM:
                     mrope_config[
                         "mrope_position_deltas"] = disaggregated_params.mrope_position_deltas_handle
                     multimodal_data["mrope_config"] = mrope_config
-                # Backfill multimodal_embed_mask so downstream chunked-prefill
+                # Backfill multimodal_embed_mask_cumsum so downstream chunked-prefill
                 # logic can slice the pre-computed embeddings correctly.
-                compute_mm_embed_mask_if_absent(
+                compute_mm_embed_cumsum_if_absent(
                     prompt_token_ids, {"multimodal_data": multimodal_data},
                     cast(BaseMultimodalInputProcessor, self.input_processor))
                 multimodal_params = MultimodalParams(
@@ -646,7 +646,7 @@ class BaseLLM:
                     BaseMultimodalInputProcessor,
                     self.input_processor).attach_multimodal_embeddings(
                         inputs, mm_embedding_info, sampling_params)
-                compute_mm_embed_mask_if_absent(
+                compute_mm_embed_cumsum_if_absent(
                     prompt_token_ids, extra_processed_inputs,
                     cast(BaseMultimodalInputProcessor, self.input_processor))
             else:
@@ -724,7 +724,7 @@ class BaseLLM:
 
     @set_api_status("beta")
     def get_stats(self, timeout: Optional[float] = 2) -> List[dict]:
-        '''Get iteration statistics from the runtime.
+        """Get iteration statistics from the runtime.
         To collect statistics, call this function after prompts have been submitted with LLM().generate().
 
         Args:
@@ -733,12 +733,12 @@ class BaseLLM:
         Returns:
             List[dict]: A list of runtime stats as dicts.
                 e.g., [{"cpuMemUsage": ..., "iter": 0, ...}, {"cpuMemUsage": ..., "iter": 1, ...}]
-        '''
+        """
         return self._executor.get_stats(timeout=timeout)
 
     @set_api_status("beta")
     def get_stats_async(self, timeout: Optional[float] = 2) -> IterationResult:
-        '''Get iteration statistics from the runtime.
+        """Get iteration statistics from the runtime.
         To collect statistics, you can call this function in an async coroutine or the /metrics endpoint (if you're using trtllm-serve)
         after prompts have been submitted.
 
@@ -747,12 +747,12 @@ class BaseLLM:
 
         Returns:
             tensorrt_llm.executor.result.IterationResult: An async iterable object containing runtime stats.
-        '''
+        """
         return self._executor.aget_stats(timeout=timeout)
 
     @set_api_status("beta")
     def get_kv_cache_events(self, timeout: Optional[float] = 2) -> List[dict]:
-        '''Get iteration KV events from the runtime.
+        """Get iteration KV events from the runtime.
 
         KV events are used to track changes and operations within the KV Cache. Types of events:
             - KVCacheCreatedData: Indicates the creation of cache blocks.
@@ -769,14 +769,14 @@ class BaseLLM:
 
         Returns:
             List[dict]: A list of runtime events as dict.
-        '''
+        """
         return self._executor.get_kv_events(timeout=timeout)
 
     @set_api_status("beta")
     def get_kv_cache_events_async(self,
                                   timeout: Optional[float] = 2
                                   ) -> IterationResult:
-        '''Get iteration KV events from the runtime.
+        """Get iteration KV events from the runtime.
 
         KV events are used to track changes and operations within the KV Cache. Types of events:
             - KVCacheCreatedData: Indicates the creation of cache blocks.
@@ -793,7 +793,7 @@ class BaseLLM:
 
         Returns:
             tensorrt_llm.executor.result.IterationResult: An async iterable object containing runtime events.
-        '''
+        """
         return self._executor.aget_kv_events(timeout=timeout)
 
     def _process_env_overrides(self,
@@ -1035,7 +1035,7 @@ class _TrtLLM(BaseLLM):
     """LLM class is the main class for running a LLM model using TensorRT LLM backend.
 
     Parameters:
-"""
+    """
 
     def __init__(self,
                  model: Union[str, Path],
@@ -1224,7 +1224,7 @@ class _TorchLLM(BaseLLM):
     """LLM class is the main class for running a LLM model using PyTorch backend.
 
     Parameters:
-"""
+    """
 
     def __init__(self,
                  model: Union[str, Path],
@@ -1265,8 +1265,7 @@ class _TorchLLM(BaseLLM):
             non_block: bool = False,
             unique_reply_rank: Optional[int] = None,
             target_ranks: int | list[int] | None = None) -> list[Any]:
-        """
-        Execute an RPC call on all GPU workers. Currently, this is only supported for RayExecutor.
+        """Execute an RPC call on all GPU workers. Currently, this is only supported for RayExecutor.
 
         Args:
             method (str): The name of the worker method to execute.
@@ -1374,7 +1373,7 @@ class LLM(_TorchLLM):
 
 # sphinx will ignore the LLM's docstring if it is not explicitly set
 LLM.__doc__ = \
-    f"""LLM class is the main class for running a LLM model.
+    """LLM class is the main class for running a LLM model.
 
     For more details about the arguments, please refer to :class:`TorchLlmArgs`.
 
