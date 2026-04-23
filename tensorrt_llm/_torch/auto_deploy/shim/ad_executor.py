@@ -682,10 +682,13 @@ class ADEngine(ModelEngine):
                 f"multimodal_embed_mask length ({flat_mask.numel()}) must "
                 f"equal prompt length ({len(all_prompt_tokens)}) for request {i}"
             )
+            # Force CPU for the cumsum so per-chunk int(cs[idx]) reads don't
+            # pay a D2H sync if the mask was moved to CUDA by a prior chunk's
+            # to_device call.
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,
                 chunk_end_pos=end_compute,
-                embed_mask_cumsum=flat_mask.to(torch.int64).cumsum(0),
+                embed_mask_cumsum=flat_mask.to(device="cpu", dtype=torch.int64).cumsum(0),
             )
             flat_start_list.append(cumsum_total_mm + runtime.num_cached_mm_tokens)
             count_list.append(runtime.num_mm_tokens_in_chunk)

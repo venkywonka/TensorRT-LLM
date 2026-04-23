@@ -169,9 +169,13 @@ class MultimodalRuntimeData:
                 "MultimodalRuntimeData requires embed_mask_cumsum.")
 
         cs = self.embed_mask_cumsum
-        # CPU-only invariant: int(cs[idx]) below forces a D2H sync. Asserting
-        # CPU device keeps the prefill hot path sync-free; producers must move
-        # the embed mask to CPU before cumsum.
+        # CPU-only invariant: int(cs[idx]) below forces a D2H sync per scalar
+        # read. Callers must materialize on CPU before cumsum — for models
+        # without multimodal_data_device_paths, the flat mask is moved to
+        # CUDA by MultimodalParams.to_device after chunk 1, so a plain
+        # .to(torch.int64).cumsum(0) on a later chunk would leave the cumsum
+        # on CUDA. Use .to(device="cpu", dtype=torch.int64).cumsum(0) at the
+        # producer side.
         assert cs.device.type == "cpu", (
             f"embed_mask_cumsum must live on CPU to avoid D2H sync in the "
             f"prefill hot path, got device={cs.device}")
