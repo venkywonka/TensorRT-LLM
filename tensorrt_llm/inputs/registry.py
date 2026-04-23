@@ -789,6 +789,9 @@ def compute_mm_embed_mask_if_absent(
         mm_special_token_ids=input_processor.get_mm_special_token_ids(),
     )
     mm_data["multimodal_embed_mask"] = embed_mask
+    # Cache the int64 cumsum; request-invariant, read once per chunk.
+    mm_data["multimodal_embed_mask_cumsum"] = embed_mask.to(
+        torch.int64).cumsum(0)
 
 
 def create_input_processor_with_hash(
@@ -938,6 +941,9 @@ def create_input_processor_with_hash(
             )
             extra_processed_inputs["multimodal_data"].setdefault(
                 "multimodal_embed_mask", embed_mask)
+            extra_processed_inputs["multimodal_data"].setdefault(
+                "multimodal_embed_mask_cumsum",
+                embed_mask.to(torch.int64).cumsum(0))
             start_positions, start_special_token_positions = (
                 _find_mm_token_start_pos_from_masks(mm_mask, special_mask,
                                                     num_mm_tokens))

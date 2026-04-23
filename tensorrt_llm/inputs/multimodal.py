@@ -138,9 +138,10 @@ class MultimodalRuntimeData:
     """Runtime data for tracking multimodal embed caching and reuse per request sequence.
 
     Constructed from the per-request int64 cumsum of ``py_multimodal_data
-    ["multimodal_embed_mask"]``; counts are derived via three O(1) cumsum
-    lookups. Handles non-contiguous embed positions (inline specials,
-    interleaved text) natively.
+    ["multimodal_embed_mask"]`` (cached at producer time as
+    ``py_multimodal_data["multimodal_embed_mask_cumsum"]``); counts are
+    derived via three O(1) cumsum lookups. Handles non-contiguous embed
+    positions (inline specials, interleaved text) natively.
 
     Attributes:
         past_seen_token_num: Total tokens already processed in previous iterations (cached)
@@ -558,7 +559,7 @@ def apply_mm_hashes(
     mm_uuids: Optional[Dict[str, List[Optional[str]]]] = None,
     hash_lib=default_hasher
 ) -> Tuple[Dict[str, List[str]], Optional[List[Optional[str]]]]:
-    """Apply hashing to multimodal data, one hash per logical multimodal unit.
+    """Apply hashing to multimodal data, one hash per multimodal item.
 
     When a UUID is provided for an item, the hash is computed from both the UUID
     and the content together: BLAKE3(UUID || Content). This ensures:
@@ -793,6 +794,7 @@ def find_mm_token_lengths(
 _MM_METADATA_ONLY_KEYS = frozenset({
     "mrope_config",
     "multimodal_embed_mask",
+    "multimodal_embed_mask_cumsum",
     "special_token_offsets",
     "layout_metadata",
 })

@@ -644,15 +644,13 @@ class ADEngine(ModelEngine):
             mm_token_positions_flat.extend(mm_pos_list)
             mm_token_lengths_flat.extend(mm_len_list)
 
-            flat_mask = (
-                req.py_multimodal_data.get("multimodal_embed_mask")
-                if req.py_multimodal_data
-                else None
-            )
+            mm_data = req.py_multimodal_data or {}
+            flat_mask = mm_data.get("multimodal_embed_mask")
+            flat_cumsum = mm_data.get("multimodal_embed_mask_cumsum")
             # special_token_offsets indices into the dense MM-token-list (which includes both embeds and specials).
             # It does not index into the prompt-position-indexed flat_mask.
             special_offsets = list(
-                (req.py_multimodal_data or {}).get("special_token_offsets")
+                mm_data.get("special_token_offsets")
                 or (layout_metadata or {}).get("special_token_offsets", [])
             )
             mm_special_offsets_cu_seqlen.append(
@@ -682,10 +680,12 @@ class ADEngine(ModelEngine):
                 f"embed_mask length {flat_mask.numel()} != prompt length "
                 f"{len(all_prompt_tokens)} for request {i}"
             )
+            if flat_cumsum is None:
+                flat_cumsum = flat_mask.to(torch.int64).cumsum(0)
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,
                 chunk_end_pos=end_compute,
-                embed_mask_cumsum=flat_mask.to(device="cpu", dtype=torch.int64).cumsum(0),
+                embed_mask_cumsum=flat_cumsum.to(device="cpu"),
             )
             flat_start_list.append(cumsum_total_mm + runtime.num_cached_mm_tokens)
             count_list.append(runtime.num_mm_tokens_in_chunk)

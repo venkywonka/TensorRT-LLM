@@ -2312,13 +2312,15 @@ class PyTorchModelEngine(ModelEngine):
                 end_compute=end_compute,
                 prompt_len=len(all_prompt_tokens),
             )
-            mm_embed_mask = request.py_multimodal_data.get(
-                'multimodal_embed_mask') if request.py_multimodal_data else None
+            mm_data = request.py_multimodal_data or {}
+            mm_embed_mask = mm_data.get('multimodal_embed_mask')
             py_multimodal_runtime = None
             if mm_embed_mask is not None:
+                cumsum = mm_data.get('multimodal_embed_mask_cumsum')
+                if cumsum is None:
+                    cumsum = mm_embed_mask.to(torch.int64).cumsum(0)
                 py_multimodal_runtime = MultimodalRuntimeData(
-                    embed_mask_cumsum=mm_embed_mask.to(
-                        device="cpu", dtype=torch.int64).cumsum(0),
+                    embed_mask_cumsum=cumsum.to(device="cpu"),
                     past_seen_token_num=past_seen_token_num,
                     chunk_end_pos=end_compute,
                 )
