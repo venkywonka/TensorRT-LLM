@@ -749,7 +749,7 @@ def _get_single_mm_token_lengths(
     return num_mm_tokens
 
 
-def compute_mm_embed_cumsum_if_absent(
+def maybe_compute_mm_embed_cumsum(
     prompt_token_ids: List[int],
     extra_processed_inputs: Optional[ExtraProcessedInputs],
     input_processor: BaseMultimodalInputProcessor,
@@ -777,7 +777,7 @@ def compute_mm_embed_cumsum_if_absent(
     mm_token_ids = input_processor.get_mm_token_ids()
     if vocab_size is None and mm_token_ids is None:
         logger.debug(
-            "compute_mm_embed_cumsum_if_absent: processor provides neither "
+            "maybe_compute_mm_embed_cumsum: processor provides neither "
             "vocab_size nor mm_token_ids — skipping cumsum computation.")
         return
 
@@ -926,7 +926,7 @@ def create_input_processor_with_hash(
             )
         # Compute all three masks once here and reuse downstream. The embed
         # cumsum is stashed into extra_processed_inputs so the wrapper's
-        # subsequent compute_mm_embed_cumsum_if_absent call short-circuits via
+        # subsequent maybe_compute_mm_embed_cumsum call short-circuits via
         # its idempotency guard, avoiding a second full-sequence isin pass.
         input_ids_tensor = _as_tensor(prompt_token_ids)
         if input_ids_tensor.numel() == 0:
@@ -1003,9 +1003,9 @@ def create_input_processor_with_hash(
                 # Hashing emits MultimodalInput but not the embed mask; populate
                 # it here so partial-iteration consumers (chunked prefill,
                 # KV-cache reuse) have what they need.
-                compute_mm_embed_cumsum_if_absent(prompt_token_ids,
-                                                  extra_processed_inputs,
-                                                  input_processor)
+                maybe_compute_mm_embed_cumsum(prompt_token_ids,
+                                              extra_processed_inputs,
+                                              input_processor)
                 return prompt_token_ids, extra_processed_inputs
             except Exception as e:
                 logger.warning(f"Multimodal hashing failed: {e}.")
@@ -1017,9 +1017,9 @@ def create_input_processor_with_hash(
                     try:
                         prompt_token_ids, extra_processed_inputs = input_processor(
                             inputs, sampling_params)
-                        compute_mm_embed_cumsum_if_absent(
-                            prompt_token_ids, extra_processed_inputs,
-                            input_processor)
+                        maybe_compute_mm_embed_cumsum(prompt_token_ids,
+                                                      extra_processed_inputs,
+                                                      input_processor)
                         return prompt_token_ids, extra_processed_inputs
                     except Exception as e2:
                         logger.warning(f"Basic input processor failed: {e}.")
@@ -1031,9 +1031,9 @@ def create_input_processor_with_hash(
             try:
                 prompt_token_ids, extra_processed_inputs = input_processor(
                     inputs, sampling_params)
-                compute_mm_embed_cumsum_if_absent(prompt_token_ids,
-                                                  extra_processed_inputs,
-                                                  input_processor)
+                maybe_compute_mm_embed_cumsum(prompt_token_ids,
+                                              extra_processed_inputs,
+                                              input_processor)
                 return prompt_token_ids, extra_processed_inputs
             except Exception as e:
                 logger.warning(f"Basic input processor failed: {e}.")

@@ -790,7 +790,7 @@ def find_mm_token_lengths(
 # Keys in py_multimodal_data that carry metadata (not vision/audio content).
 # If py_multimodal_data has ONLY these keys, the request has no real MM
 # payload (e.g. mrope-only warmup on an mrope-enabled model) and the
-# require_mm_embed_cumsum_if_needed gate short-circuits.
+# check_mm_embed_cumsum_if_needed gate short-circuits.
 _MM_METADATA_ONLY_KEYS = frozenset({
     "mrope_config",
     "multimodal_embed_mask_cumsum",
@@ -813,8 +813,8 @@ def _has_mm_payload_keys(py_multimodal_data: Optional[dict]) -> bool:
 
 
 # TODO(TRTLLM-11951): fold this gate into MultimodalRuntimeData.__post_init__
-# so new call sites cannot forget to invoke it (see PR #12944 review).
-def require_mm_embed_cumsum_if_needed(
+# so new call sites cannot forget to invoke it.
+def check_mm_embed_cumsum_if_needed(
     py_multimodal_data: Optional[dict],
     *,
     begin_compute: int,

@@ -55,7 +55,7 @@ def _get_uncached_multimodal_params(
                 and "multimodal_embedding" in param.multimodal_data
                 and param.multimodal_data["multimodal_embedding"] is not None):
             logger.debug(
-                f"Skipping encoder forward for param with cached multimodal_embedding"
+                "Skipping encoder forward for param with cached multimodal_embedding"
             )
             continue
 

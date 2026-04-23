@@ -35,9 +35,9 @@ from ..executor.postproc_worker import PostprocParams
 from ..executor.request import DEFAULT_REQUEST_PRIORITY
 from ..executor.utils import (RequestError, create_mpi_comm_session,
                               get_spawn_proxy_process_env)
-from ..inputs import (PromptInputs, compute_mm_embed_cumsum_if_absent,
-                      create_input_processor, create_input_processor_with_hash,
-                      get_cache_salt_id, prompt_inputs)
+from ..inputs import (PromptInputs, create_input_processor,
+                      create_input_processor_with_hash, get_cache_salt_id,
+                      maybe_compute_mm_embed_cumsum, prompt_inputs)
 from ..logger import logger
 from ..sampling_params import SamplingParams
 from ..scheduling_params import SchedulingParams
@@ -593,7 +593,7 @@ class BaseLLM:
                     multimodal_data["mrope_config"] = mrope_config
                 # Backfill multimodal_embed_mask_cumsum so downstream chunked-prefill
                 # logic can slice the pre-computed embeddings correctly.
-                compute_mm_embed_cumsum_if_absent(
+                maybe_compute_mm_embed_cumsum(
                     prompt_token_ids, {"multimodal_data": multimodal_data},
                     cast(BaseMultimodalInputProcessor, self.input_processor))
                 multimodal_params = MultimodalParams(
@@ -646,7 +646,7 @@ class BaseLLM:
                     BaseMultimodalInputProcessor,
                     self.input_processor).attach_multimodal_embeddings(
                         inputs, mm_embedding_info, sampling_params)
-                compute_mm_embed_cumsum_if_absent(
+                maybe_compute_mm_embed_cumsum(
                     prompt_token_ids, extra_processed_inputs,
                     cast(BaseMultimodalInputProcessor, self.input_processor))
             else:

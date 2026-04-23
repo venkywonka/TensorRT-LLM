@@ -37,7 +37,7 @@ from tensorrt_llm._torch.pyexecutor.seq_slot_manager import SeqSlotManager
 from tensorrt_llm._torch.speculative import get_spec_drafter
 from tensorrt_llm._torch.speculative.eagle3 import Eagle3OneModelSampler, Eagle3ResourceManager
 from tensorrt_llm._utils import nvtx_range
-from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData, require_mm_embed_cumsum_if_needed
+from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData, check_mm_embed_cumsum_if_needed
 from tensorrt_llm.llmapi.llm_args import (
     ContextChunkingPolicy,
     EagleDecodingConfig,
@@ -663,7 +663,7 @@ class ADEngine(ModelEngine):
                 continue
 
             all_prompt_tokens = req.get_tokens(0)
-            require_mm_embed_cumsum_if_needed(
+            check_mm_embed_cumsum_if_needed(
                 req.py_multimodal_data,
                 begin_compute=begin_compute,
                 end_compute=end_compute,

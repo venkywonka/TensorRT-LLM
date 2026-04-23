@@ -20,7 +20,7 @@ from tensorrt_llm._utils import (is_trace_enabled, maybe_pin_memory, nvtx_range,
 from tensorrt_llm.bindings.internal.runtime import TaskLayerModuleConfig
 from tensorrt_llm.inputs.multimodal import (MultimodalParams,
                                             MultimodalRuntimeData,
-                                            require_mm_embed_cumsum_if_needed)
+                                            check_mm_embed_cumsum_if_needed)
 from tensorrt_llm.inputs.registry import (create_input_processor,
                                           create_input_processor_with_hash)
 from tensorrt_llm.llmapi.llm_args import (CudaGraphConfig, TorchCompileConfig,
@@ -2306,7 +2306,7 @@ class PyTorchModelEngine(ModelEngine):
 
             # Embed mask is required only for partial iterations (chunked
             # prefill or KV-cache reuse); full-prefill degrades gracefully.
-            require_mm_embed_cumsum_if_needed(
+            check_mm_embed_cumsum_if_needed(
                 request.py_multimodal_data,
                 begin_compute=past_seen_token_num,
                 end_compute=end_compute,
