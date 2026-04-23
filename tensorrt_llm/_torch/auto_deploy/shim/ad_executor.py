@@ -679,12 +679,9 @@ class ADEngine(ModelEngine):
                 continue
 
             assert flat_mask.numel() == len(all_prompt_tokens), (
-                f"multimodal_embed_mask length ({flat_mask.numel()}) must "
-                f"equal prompt length ({len(all_prompt_tokens)}) for request {i}"
+                f"embed_mask length {flat_mask.numel()} != prompt length "
+                f"{len(all_prompt_tokens)} for request {i}"
             )
-            # Force CPU for the cumsum so per-chunk int(cs[idx]) reads don't
-            # pay a D2H sync if the mask was moved to CUDA by a prior chunk's
-            # to_device call.
             runtime = MultimodalRuntimeData(
                 past_seen_token_num=begin_compute,
                 chunk_end_pos=end_compute,

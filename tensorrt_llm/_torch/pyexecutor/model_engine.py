@@ -2316,11 +2316,6 @@ class PyTorchModelEngine(ModelEngine):
                 'multimodal_embed_mask') if request.py_multimodal_data else None
             py_multimodal_runtime = None
             if mm_embed_mask is not None:
-                # Force CPU for the cumsum so per-chunk int(cs[idx]) reads
-                # don't pay a D2H sync. Models without
-                # multimodal_data_device_paths move the mask to CUDA after
-                # chunk 1's to_device call; .cpu() costs one small copy and
-                # preserves the hot-path invariant.
                 py_multimodal_runtime = MultimodalRuntimeData(
                     embed_mask_cumsum=mm_embed_mask.to(
                         device="cpu", dtype=torch.int64).cumsum(0),

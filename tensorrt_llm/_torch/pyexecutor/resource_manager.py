@@ -205,9 +205,7 @@ def _locate_accepted_draft_tokens(requests: List[LlmRequest]):
     return num_accepted_draft_tokens_offset, accepted_draft_tokens_indices, rewind_draft_token_separate_adjustments
 
 
-# M-RoPE (Multimodal Rotary Position Embedding, used by Qwen2-VL / Qwen3-VL)
-# encodes positions along three axes: (temporal, height, width). The tensor
-# layout everywhere in TRT-LLM is (num_axes, batch, seq_len).
+# M-RoPE (Qwen2-VL/Qwen3-VL) splits positions across 3 axes: temporal/height/width.
 _MROPE_NUM_AXES = 3
 
 

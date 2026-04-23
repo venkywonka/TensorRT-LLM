@@ -169,29 +169,17 @@ class MultimodalRuntimeData:
                 "MultimodalRuntimeData requires embed_mask_cumsum.")
 
         cs = self.embed_mask_cumsum
-        # CPU-only invariant: int(cs[idx]) below forces a D2H sync per scalar
-        # read. Callers must materialize on CPU before cumsum — for models
-        # without multimodal_data_device_paths, the flat mask is moved to
-        # CUDA by MultimodalParams.to_device after chunk 1, so a plain
-        # .to(torch.int64).cumsum(0) on a later chunk would leave the cumsum
-        # on CUDA. Use .to(device="cpu", dtype=torch.int64).cumsum(0) at the
-        # producer side.
-        assert cs.device.type == "cpu", (
-            f"embed_mask_cumsum must live on CPU to avoid D2H sync in the "
-            f"prefill hot path, got device={cs.device}")
-        assert cs.numel() > 0, (
-            "embed_mask_cumsum must be non-empty (request has zero tokens?)")
+        # int(cs[idx]) below would D2H-sync if cs lived on CUDA.
+        assert cs.device.type == "cpu", f"embed_mask_cumsum must be CPU, got {cs.device}"
+        assert cs.numel() > 0, "embed_mask_cumsum must be non-empty"
         assert self.chunk_end_pos >= self.past_seen_token_num, (
-            f"chunk_end_pos ({self.chunk_end_pos}) must be >= "
-            f"past_seen_token_num ({self.past_seen_token_num}); cumsum is "
-            f"monotonic so inverting this silently yields a negative "
-            f"num_mm_tokens_in_chunk")
+            f"chunk_end_pos ({self.chunk_end_pos}) < past_seen_token_num "
+            f"({self.past_seen_token_num})")
         assert 0 <= self.past_seen_token_num <= cs.numel(), (
-            f"past_seen_token_num ({self.past_seen_token_num}) out of bounds "
-            f"for embed_mask_cumsum of length {cs.numel()}")
+            f"past_seen_token_num {self.past_seen_token_num} out of range "
+            f"[0, {cs.numel()}]")
         assert self.chunk_end_pos <= cs.numel(), (
-            f"chunk_end_pos ({self.chunk_end_pos}) out of bounds for "
-            f"embed_mask_cumsum of length {cs.numel()}")
+            f"chunk_end_pos {self.chunk_end_pos} > cumsum length {cs.numel()}")
 
         self.num_cached_mm_tokens = (int(cs[self.past_seen_token_num - 1])
                                      if self.past_seen_token_num > 0 else 0)
@@ -847,9 +835,7 @@ def require_mm_embed_mask_if_needed(
     warning via ``logger.warning_once`` and proceed.
     """
     assert 0 <= begin_compute <= end_compute <= prompt_len, (
-        f"Invalid iteration window: begin_compute={begin_compute}, "
-        f"end_compute={end_compute}, prompt_len={prompt_len}; expected "
-        f"0 <= begin_compute <= end_compute <= prompt_len")
+        f"invalid window: {begin_compute}..{end_compute}/{prompt_len}")
     if not _has_mm_payload_keys(py_multimodal_data):
         return
     if py_multimodal_data.get("multimodal_embed_mask") is not None:
