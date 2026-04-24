@@ -342,8 +342,16 @@ class TestModelingMultimodal(unittest.TestCase, ABC):
         multimodal_params_list,
         is_gen: bool = False,
         num_cached_tokens_per_seq: Optional[List[int]] = None,
+        total_prompt_len: Optional[int] = None,
     ):
-        """Prepare inputs for TensorRT-LLM model forward pass."""
+        """Prepare inputs for TensorRT-LLM model forward pass.
+
+        `total_prompt_len`: full request prompt length. Required for chunked
+        prefill so `embed_mask_cumsum` is sized to the whole request (matches
+        production's request-invariant cumsum from
+        `tensorrt_llm.inputs.registry.maybe_compute_mm_embed_cumsum`). Defaults
+        to `num_cached + input_ids.size(-1)` for non-chunked callers.
+        """
         if self.attn_metadata is None:
             raise ValueError("attn_metadata must be initialized before calling get_trtllm_inputs")
 
@@ -370,7 +378,11 @@ class TestModelingMultimodal(unittest.TestCase, ABC):
             position_ids = [torch.arange(0, input_ids.size(-1), dtype=torch.int32)]
             if multimodal_params_list[0].multimodal_input is not None:
                 mi = multimodal_params_list[0].multimodal_input
-                prompt_len = num_cached_tokens_per_seq[0] + input_ids.size(-1)
+                prompt_len = (
+                    total_prompt_len
+                    if total_prompt_len is not None
+                    else num_cached_tokens_per_seq[0] + input_ids.size(-1)
+                )
                 full_mask = torch.zeros(prompt_len, dtype=torch.bool)
                 for unit_idx in range(len(mi.multimodal_positions)):
                     pos = mi.multimodal_positions[unit_idx]
@@ -546,14 +558,15 @@ class TestModelingMultimodal(unittest.TestCase, ABC):
         print("  Running context phase...")
         with torch.inference_mode():
             if scenario.chunked_prefill:
-                # Chunked prefill: process input in chunks
                 chunk_size = 128
+                total_prompt_len = len(trtllm_input_ids)
                 for i in range(0, len(trtllm_input_ids), chunk_size):
                     ctx_trtllm_inputs = self.get_trtllm_inputs(
                         trtllm_input_ids[i : i + chunk_size],
                         multimodal_params_list,
                         is_gen=False,
                         num_cached_tokens_per_seq=[i],
+                        total_prompt_len=total_prompt_len,
                     )
                     logits = self.run_trtllm_forward(ctx_trtllm_inputs, use_cuda_graph=False)
 
