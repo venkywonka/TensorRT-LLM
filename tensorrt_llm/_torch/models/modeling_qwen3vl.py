@@ -114,10 +114,11 @@ class Qwen3VLInputProcessorBase(BaseMultimodalInputProcessor, BaseMultimodalDumm
         merge = self.config.vision_config.spatial_merge_size
         if isinstance(grid_thw, torch.Tensor):
             if grid_thw.ndim == 2:
-                assert grid_thw.shape[0] == 1, (
-                    "Qwen3-VL per-item video_grid_thw must have one row, "
-                    f"got shape={tuple(grid_thw.shape)}"
-                )
+                if grid_thw.shape[0] != 1:
+                    raise ValueError(
+                        "Qwen3-VL per-item video_grid_thw must have one row, "
+                        f"got shape={tuple(grid_thw.shape)}"
+                    )
                 grid_thw = grid_thw[0]
             t, h, w = (int(x) for x in grid_thw.tolist())
         else:
