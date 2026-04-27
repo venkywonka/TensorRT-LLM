@@ -736,11 +736,57 @@ def int32_to_hexdigest(int32_values: List[int]) -> str:
     return ''.join(result)
 
 
+_PAYLOAD_KEY_PREFIXES = ("pixel_values", "multimodal_embedding")
+
+# Per-item descriptors are 1D or 2D (e.g. video_grid_thw is (n, 3)).
+# NOTE: rank > 2 entries are assumed to be payloads and silently dropped.
+# Raise this cap (with a unit test) if a model needs higher-rank metadata.
+_MAX_METADATA_RANK = 2
+
+
+def _get_processed_item_metadata(
+    processed_multimodal_data: Optional[Dict[str, Any]],
+    modality: str,
+    idx: int,
+    item_count: int,
+) -> Optional[Dict[str, Any]]:
+    """Filter `processed_multimodal_data[modality]` to the descriptors for item `idx`.
+
+    Input is the full HF processor output for a modality (payloads + descriptors,
+    `BatchFeature`-like). Output is descriptor-only metadata for one item:
+    payloads filtered out, per-item entries sliced to row `idx`.
+
+    A value is forwarded iff:
+      - key is not a payload prefix (`_PAYLOAD_KEY_PREFIXES`)
+      - leading dim / `len()` equals `item_count`
+      - tensors/arrays only: rank in `[1, _MAX_METADATA_RANK]`
+
+    Returns `None` (not `{}`) when nothing forwarded.
+    """
+    if not isinstance(processed_multimodal_data, dict):
+        return None
+    processed_modality = processed_multimodal_data.get(modality)
+    if not isinstance(processed_modality, dict):
+        return None
+
+    per_item: Dict[str, Any] = {}
+    for key, value in processed_modality.items():
+        if any(key.startswith(p) for p in _PAYLOAD_KEY_PREFIXES):
+            continue
+        if isinstance(value, (torch.Tensor, np.ndarray)):
+            if (1 <= value.ndim <= _MAX_METADATA_RANK
+                    and value.shape[0] == item_count):
+                per_item[key] = value[idx]
+        elif isinstance(value, (list, tuple)) and len(value) == item_count:
+            per_item[key] = value[idx]
+    return per_item or None
+
+
 def find_mm_token_lengths(
     mm_data: Dict[str, Any],
     input_processor: Any,
     *,
-    multimodal_data: Optional[Dict[str, Any]] = None,
+    processed_multimodal_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, List[int]]:
     """Get the token lengths of each multimodal item.
 
@@ -749,11 +795,10 @@ def find_mm_token_lengths(
     multimodal content tokens. This mm_token_lengths represents the full chunk from beginning
     to end, not just pure image/video/audio tokens.
 
-    When `multimodal_data["video"]["video_grid_thw"]` is present and its row
-    count matches the number of videos in `mm_data`, each row is forwarded
-    to `input_processor.get_num_tokens_per_video` as a kwarg. Processors are
-    free to use it for a faster token-count computation or to ignore it;
-    falls back to calling the method without the kwarg on mismatch / absence.
+    `processed_multimodal_data` is the full processor output (i.e.
+    `extra_processed_inputs["multimodal_data"]`, payloads + descriptors).
+    When present, descriptors are filtered out per-item and forwarded to
+    `get_num_tokens_per_$modality` as `processed_item_metadata`.
     """
     mm_items = {
         modality: items if isinstance(items, list) else [items]
@@ -761,49 +806,37 @@ def find_mm_token_lengths(
     }
     num_mm_tokens = {}
 
-    mm_video_dict = (multimodal_data or {}).get("video") or {}
-    video_grid_thw = mm_video_dict.get("video_grid_thw")
-
     for modality, items in mm_items.items():
         if not hasattr(input_processor, f"get_num_tokens_per_{modality}"):
             raise AttributeError(
                 f"Input processor {type(input_processor).__name__} does not have 'get_num_tokens_per_{modality}' method required for multimodal hashing."
             )
 
-        fast_path_vgt = None
-        if modality == "video" and video_grid_thw is not None:
-            if len(video_grid_thw) == len(items):
-                fast_path_vgt = video_grid_thw
-            else:
-                logger.warning(
-                    "find_mm_token_lengths: video_grid_thw row count "
-                    f"({len(video_grid_thw)}) does not match number of "
-                    f"videos in mm_data ({len(items)}); falling back to "
-                    "per-item recompute without video_grid_thw.")
-
         modality_token_lengths = []
         for idx, item in enumerate(items):
+            # Forward per-item descriptors only when slicing actually
+            # produced something — leave the kwarg off otherwise so
+            # receivers don't have to declare or absorb a None.
+            processed_item_metadata = _get_processed_item_metadata(
+                processed_multimodal_data, modality, idx, len(items))
+            extra: Dict[str, Any] = ({
+                "processed_item_metadata":
+                processed_item_metadata,
+            } if processed_item_metadata is not None else {})
             if modality == "image":
                 num_tokens = input_processor.get_num_tokens_per_image(
-                    image=item, )
+                    image=item, **extra)
                 modality_token_lengths.append(num_tokens)
             elif modality == "video":
                 if isinstance(item, tensorrt_llm.inputs.utils.VideoData):
                     item = item.frames
                 assert isinstance(item, list), "Video must be a list of frames"
-                call_kwargs = {"video": item}
-                if fast_path_vgt is not None:
-                    # Note: forwarding video_grid_thw does not guarantee the
-                    # processor uses it; get_num_tokens_per_video is
-                    # processor-dependent. Qwen3-VL consumes it (fast path);
-                    # other processors may ignore it via **kwargs.
-                    call_kwargs["video_grid_thw"] = fast_path_vgt[idx]
                 num_tokens = input_processor.get_num_tokens_per_video(
-                    **call_kwargs)
+                    video=item, **extra)
                 modality_token_lengths.append(num_tokens)
             elif modality == "audio":
                 num_tokens = input_processor.get_num_tokens_per_audio(
-                    audio=item)
+                    audio=item, **extra)
                 modality_token_lengths.append(num_tokens)
             else:
                 raise ValueError(f"Unsupported modality: {modality}")
@@ -880,8 +913,7 @@ def check_mm_embed_cumsum_if_needed(
             f"end_compute={end_compute}, prompt_len={prompt_len}) but "
             f"py_multimodal_data has keys {mm_keys} with no cumsum. The input "
             f"processor may be missing a discriminator (override "
-            f"get_mm_token_ids or ensure get_vocab_size "
-            f"resolves).")
+            f"get_mm_token_ids or ensure get_vocab_size resolves).")
 
     logger.warning_once(
         "multimodal_embed_mask_cumsum missing on multimodal request (keys=%s); "

@@ -299,6 +299,7 @@ class BaseMultimodalInputProcessor(ABC):
 
         Subclasses can override this method to provide custom logic to calculate the number of tokens.
         """
+        kwargs.pop("processed_item_metadata", None)
         if isinstance(image, torch.Tensor):
             image_size = tuple(image.shape[-2:])
         else:
@@ -324,6 +325,7 @@ class BaseMultimodalInputProcessor(ABC):
 
         Subclasses can override this method to provide custom logic to calculate the number of tokens.
         """
+        kwargs.pop("processed_item_metadata", None)
         num_frames = len(video)
         first_frame = video[0]
         if isinstance(first_frame, torch.Tensor):
@@ -743,11 +745,13 @@ def _get_single_mm_token_lengths(
     mm_data: Dict[str, Any],
     input_processor: BaseMultimodalInputProcessor,
     *,
-    multimodal_data: Optional[Dict[str, Any]] = None,
+    processed_multimodal_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[List[int]]:
     """Get the single set of MM token lengths (first value from find_mm_token_lengths). Returns None if empty."""
     num_mm_tokens_by_key = find_mm_token_lengths(
-        mm_data, input_processor, multimodal_data=multimodal_data)
+        mm_data,
+        input_processor,
+        processed_multimodal_data=processed_multimodal_data)
     if not num_mm_tokens_by_key:
         return None
     # find_mm_token_lengths returns Dict[modality, List[int]], e.g. {"image": [2928, 2928]}.
@@ -851,8 +855,8 @@ def create_input_processor_with_hash(
         num_mm_tokens = _get_single_mm_token_lengths(
             mm_data,
             input_processor,
-            multimodal_data=(extra_processed_inputs
-                             or {}).get("multimodal_data"),
+            processed_multimodal_data=(extra_processed_inputs
+                                       or {}).get("multimodal_data"),
         )
         if num_mm_tokens is None:
             raise ValueError(
@@ -920,8 +924,8 @@ def create_input_processor_with_hash(
             num_mm_tokens_by_key = find_mm_token_lengths(
                 mm_data,
                 input_processor,
-                multimodal_data=(extra_processed_inputs
-                                 or {}).get("multimodal_data"),
+                processed_multimodal_data=(extra_processed_inputs
+                                           or {}).get("multimodal_data"),
             )
             if not num_mm_tokens_by_key:
                 return [], None

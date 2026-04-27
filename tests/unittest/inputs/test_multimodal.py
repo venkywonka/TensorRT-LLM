@@ -2,13 +2,14 @@
 # Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 """Tests for MultimodalRuntimeData cumsum math and the flat-mask producer."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 import torch
 
 from tensorrt_llm.inputs.multimodal import MultimodalRuntimeData, find_mm_token_lengths
 from tensorrt_llm.inputs.registry import maybe_compute_mm_embed_cumsum
+from tensorrt_llm.inputs.utils import VideoData
 
 
 def test_maybe_compute_mm_embed_cumsum_populates_py_multimodal_data():
@@ -106,72 +107,93 @@ def test_runtime_data_requires_cumsum():
 
 
 def _fake_video(num_frames: int = 4):
-    """Video must be a list of frames per find_mm_token_lengths contract.
-
-    Non-Tensor placeholder skips the torch.Tensor -> PIL conversion branch.
-    """
+    """Video must be a list of frames per find_mm_token_lengths contract."""
     return [object() for _ in range(num_frames)]
 
 
-def test_find_mm_token_lengths_video_fast_path_uses_video_grid_thw():
-    """Video fast path uses video_grid_thw.
+def test_find_mm_token_lengths_video_data_preserves_frame_list_identity():
+    """VideoData frames are passed through unchanged to the model counter.
 
-    When multimodal_data provides video_grid_thw, the per-video count is
-    derived from it rather than the slow-path processor call.
+    No `processed_multimodal_data` is provided, so `processed_item_metadata`
+    must NOT appear in the call kwargs — receivers that don't accept it
+    (no `**kwargs`, no default) should still work.
     """
     processor = Mock()
     processor.get_num_tokens_per_image = Mock(return_value=100)
+    frames = _fake_video()
 
-    def _count_video(*, video, video_grid_thw=None, **kwargs):
-        if video_grid_thw is not None:
-            t, h, w = (int(x) for x in video_grid_thw)
-            return t * h * w
-        return 999  # slow-path sentinel — must not be hit.
+    def _count_video(*, video):
+        assert video is frames
+        return 98
 
     processor.get_num_tokens_per_video = Mock(side_effect=_count_video)
 
-    mm_data = {"video": [_fake_video(), _fake_video(), _fake_video()]}
-    vgt = torch.tensor([[2, 14, 14], [1, 7, 7], [3, 28, 28]])
-    multimodal_data = {"video": {"video_grid_thw": vgt}}
+    mm_data = {"video": [VideoData(frames=frames, metadata={})]}
+    result = find_mm_token_lengths(mm_data, processor)
 
-    result = find_mm_token_lengths(mm_data, processor, multimodal_data=multimodal_data)
-
-    assert result == {"video": torch.prod(vgt, dim=1).tolist()}
-    assert processor.get_num_tokens_per_video.call_count == 3
+    assert result == {"video": [98]}
+    # Lock in the contract: kwarg absent when nothing to slice.
+    assert "processed_item_metadata" not in processor.get_num_tokens_per_video.call_args.kwargs
 
 
-def test_find_mm_token_lengths_video_grid_thw_shape_mismatch_falls_back():
-    """Shape-mismatched video_grid_thw warns and falls back to slow path.
-
-    When video_grid_thw row count does not match the number of videos,
-    the fast path is skipped: the processor is called without the
-    video_grid_thw kwarg and a single warning is emitted.
-    """
+def test_find_mm_token_lengths_video_tensor_frames_passthrough():
+    """Tensor video frames are forwarded unchanged; per-frame conversion is the model's job."""
     processor = Mock()
-    processor.get_num_tokens_per_image = Mock(return_value=100)
+    frames = [torch.zeros((3, 4, 6), dtype=torch.float32)]
 
-    def _count_video(*, video, video_grid_thw=None, **kwargs):
-        if video_grid_thw is not None:
-            t, h, w = (int(x) for x in video_grid_thw)
-            return t * h * w
-        return 99  # slow-path sentinel.
+    def _count_video(*, video):
+        assert video is frames
+        assert isinstance(video[0], torch.Tensor)
+        return 42
 
     processor.get_num_tokens_per_video = Mock(side_effect=_count_video)
 
-    mm_data = {"video": [_fake_video(), _fake_video()]}
-    # 3 rows, 2 videos -> mismatch triggers fallback + warning.
-    vgt = torch.tensor([[1, 1, 1], [2, 2, 2], [3, 3, 3]])
-    multimodal_data = {"video": {"video_grid_thw": vgt}}
+    mm_data = {"video": [VideoData(frames=frames, metadata={})]}
+    result = find_mm_token_lengths(mm_data, processor)
 
-    with patch("tensorrt_llm.inputs.multimodal.logger.warning") as warn_mock:
-        result = find_mm_token_lengths(mm_data, processor, multimodal_data=multimodal_data)
+    assert result == {"video": [42]}
+    assert "processed_item_metadata" not in processor.get_num_tokens_per_video.call_args.kwargs
 
-    assert result == {"video": [99, 99]}
-    assert processor.get_num_tokens_per_video.call_count == 2
-    for call in processor.get_num_tokens_per_video.call_args_list:
-        assert call.kwargs.get("video_grid_thw") is None
-    warn_mock.assert_called_once()
-    assert "video_grid_thw" in warn_mock.call_args.args[0]
+
+def test_find_mm_token_lengths_passes_processed_item_metadata():
+    """Batched processor metadata is sliced into per-item processed_item_metadata payloads."""
+    processor = Mock()
+    frames = [_fake_video(), _fake_video()]
+    processed_multimodal_data = {
+        "video": {
+            "video_grid_thw": torch.tensor([[1, 4, 6], [2, 8, 10]]),
+            "frame_counts": [8, 16],
+            "not_per_item": torch.tensor([[1, 2, 3]]),
+            "pixel_values_videos": torch.zeros((2, 3, 4, 4)),
+        }
+    }
+    seen_processed_item_metadata = []
+
+    def _count_video(*, video, processed_item_metadata):
+        assert video in frames
+        assert "pixel_values_videos" not in processed_item_metadata
+        assert "not_per_item" not in processed_item_metadata
+        seen_processed_item_metadata.append(processed_item_metadata)
+        return (
+            int(processed_item_metadata["video_grid_thw"][0])
+            + processed_item_metadata["frame_counts"]
+        )
+
+    processor.get_num_tokens_per_video = Mock(side_effect=_count_video)
+
+    mm_data = {
+        "video": [
+            VideoData(frames=frames[0], metadata={}),
+            VideoData(frames=frames[1], metadata={}),
+        ]
+    }
+    result = find_mm_token_lengths(
+        mm_data, processor, processed_multimodal_data=processed_multimodal_data
+    )
+
+    assert result == {"video": [9, 18]}
+    assert torch.equal(seen_processed_item_metadata[0]["video_grid_thw"], torch.tensor([1, 4, 6]))
+    assert torch.equal(seen_processed_item_metadata[1]["video_grid_thw"], torch.tensor([2, 8, 10]))
 
 
 def test_find_mm_token_lengths_image_only_request_unaffected():
