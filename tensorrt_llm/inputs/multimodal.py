@@ -39,9 +39,10 @@ def strip_mm_data_for_generation(mm_data: Dict[str, Any]) -> None:
 
 @dataclass
 class MultimodalInput:
-    """Per-logical-unit multimodal metadata for KV-cache hashing (C++ layer).
+    """Per-logical-unit multimodal metadata for KV-cache hashing.
 
     Indexed per logical unit (one image, video, or audio clip).
+    `to_tensor()` intentionally exposes only the legacy C++ fields.
     """
 
     multimodal_hashes: List[List[int]]
@@ -86,6 +87,24 @@ class MultimodalInput:
     returned in KV cache events.
     """
 
+    multimodal_modalities: Optional[List[str]] = None
+    """Optional modality name per logical unit, in the same item order."""
+
+    multimodal_encoder_output_lengths: Optional[List[int]] = None
+    """Per logical unit count of encoder-output embedding vectors.
+
+    Defaults to `multimodal_lengths` for legacy callers. This preserves the
+    current single-modality behavior while giving runtime/result splitters a
+    field whose name does not imply prompt-side token count semantics.
+    """
+
+    @staticmethod
+    def _validate_aligned_length(field_name: str, value: List[Any],
+                                 expected_len: int) -> None:
+        if len(value) != expected_len:
+            raise ValueError(f"{field_name} length ({len(value)}) must match "
+                             f"multimodal_hashes length ({expected_len})")
+
     def __post_init__(self):
         """Validate input data structure and consistency."""
         # Validate multimodal_hashes
@@ -98,33 +117,71 @@ class MultimodalInput:
 
         # Check consistent length of hash arrays
         hash_lengths = [len(h) for h in self.multimodal_hashes]
+        if not hash_lengths:
+            raise ValueError("multimodal_hashes must be non-empty")
         if min(hash_lengths) != max(hash_lengths):
             raise ValueError(
                 f"All hash arrays must have the same length, got lengths: {hash_lengths}"
             )
+        if not all(
+                isinstance(value, int) for h in self.multimodal_hashes
+                for value in h):
+            raise TypeError("multimodal_hashes must contain only integers")
 
         # Check that positions and lengths are valid
+        if not isinstance(self.multimodal_positions, list):
+            raise TypeError("multimodal_positions must be a list")
+        if not isinstance(self.multimodal_lengths, list):
+            raise TypeError("multimodal_lengths must be a list")
         if not all(isinstance(x, int) for x in self.multimodal_positions):
             raise TypeError("multimodal_positions must contain only integers")
+        if not all(x >= 0 for x in self.multimodal_positions):
+            raise ValueError("multimodal_positions must be non-negative")
 
         if not all(isinstance(x, int) for x in self.multimodal_lengths):
             raise TypeError("multimodal_lengths must contain only integers")
+        if not all(x >= 0 for x in self.multimodal_lengths):
+            raise ValueError("multimodal_lengths must be non-negative")
 
-        # Check position and length arrays match in size
-        if len(self.multimodal_positions) != len(self.multimodal_lengths):
+        item_count = len(self.multimodal_hashes)
+        self._validate_aligned_length("multimodal_positions",
+                                      self.multimodal_positions, item_count)
+        self._validate_aligned_length("multimodal_lengths",
+                                      self.multimodal_lengths, item_count)
+
+        if self.multimodal_encoder_output_lengths is None:
+            self.multimodal_encoder_output_lengths = list(
+                self.multimodal_lengths)
+        if not isinstance(self.multimodal_encoder_output_lengths, list):
+            raise TypeError("multimodal_encoder_output_lengths must be a list")
+        self._validate_aligned_length("multimodal_encoder_output_lengths",
+                                      self.multimodal_encoder_output_lengths,
+                                      item_count)
+        if not all(
+                isinstance(x, int)
+                for x in self.multimodal_encoder_output_lengths):
+            raise TypeError(
+                "multimodal_encoder_output_lengths must contain only integers")
+        if not all(x >= 0 for x in self.multimodal_encoder_output_lengths):
             raise ValueError(
-                f"Position and length arrays must match in size: "
-                f"positions={len(self.multimodal_positions)}, lengths={len(self.multimodal_lengths)}"
-            )
+                "multimodal_encoder_output_lengths must be non-negative")
+
+        if self.multimodal_modalities is not None:
+            if not isinstance(self.multimodal_modalities, list):
+                raise TypeError("multimodal_modalities must be a list")
+            self._validate_aligned_length("multimodal_modalities",
+                                          self.multimodal_modalities,
+                                          item_count)
+            if not all(isinstance(x, str) for x in self.multimodal_modalities):
+                raise TypeError(
+                    "multimodal_modalities must contain only strings")
 
         # Validate multimodal_uuids if provided
         if self.multimodal_uuids is not None:
             if not isinstance(self.multimodal_uuids, list):
                 raise TypeError("multimodal_uuids must be a list")
-            if len(self.multimodal_uuids) != len(self.multimodal_hashes):
-                raise ValueError(
-                    f"multimodal_uuids length ({len(self.multimodal_uuids)}) must match "
-                    f"multimodal_hashes length ({len(self.multimodal_hashes)})")
+            self._validate_aligned_length("multimodal_uuids",
+                                          self.multimodal_uuids, item_count)
             for i, uuid in enumerate(self.multimodal_uuids):
                 if uuid is not None and not isinstance(uuid, str):
                     raise TypeError(
@@ -138,11 +195,15 @@ class MultimodalInput:
         mm_positions: List[int],
         mm_lengths: List[int],
         mm_uuids: Optional[List[Optional[str]]] = None,
+        mm_modalities: Optional[List[str]] = None,
+        mm_encoder_output_lengths: Optional[List[int]] = None,
     ) -> 'MultimodalInput':
         return cls(multimodal_hashes=mm_hashes,
                    multimodal_positions=mm_positions,
                    multimodal_lengths=mm_lengths,
-                   multimodal_uuids=mm_uuids)
+                   multimodal_uuids=mm_uuids,
+                   multimodal_modalities=mm_modalities,
+                   multimodal_encoder_output_lengths=mm_encoder_output_lengths)
 
     def to_tensor(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Convert data to tensors"""
@@ -1006,8 +1067,12 @@ def _find_mm_token_start_pos_from_masks(
 
 def validate_mm_inputs(prompt_token_ids: Union[torch.Tensor, List[int],
                                                np.ndarray],
-                       mm_hashes: List[List[int]], start_positions: List[int],
-                       num_mm_tokens: List[int]) -> None:
+                       mm_hashes: List[List[int]],
+                       start_positions: List[int],
+                       num_mm_tokens: List[int],
+                       mm_encoder_output_lengths: Optional[List[int]] = None,
+                       mm_modalities: Optional[List[str]] = None,
+                       mm_uuids: Optional[List[Optional[str]]] = None) -> None:
     """Validates multimodal inputs for consistency and correctness."""
     # Validate number of hashes matches number of chunks
     if len(mm_hashes) != len(num_mm_tokens):
@@ -1020,6 +1085,20 @@ def validate_mm_inputs(prompt_token_ids: Union[torch.Tensor, List[int],
         raise AssertionError(
             f"Number of start positions ({len(start_positions)}) does not match "
             f"number of multimodal chunks ({len(num_mm_tokens)})")
+    if mm_encoder_output_lengths is not None and len(
+            mm_encoder_output_lengths) != len(num_mm_tokens):
+        raise AssertionError(
+            "Number of encoder-output lengths "
+            f"({len(mm_encoder_output_lengths)}) does not match number of "
+            f"multimodal chunks ({len(num_mm_tokens)})")
+    if mm_modalities is not None and len(mm_modalities) != len(num_mm_tokens):
+        raise AssertionError(
+            f"Number of modalities ({len(mm_modalities)}) does not match "
+            f"number of multimodal chunks ({len(num_mm_tokens)})")
+    if mm_uuids is not None and len(mm_uuids) != len(num_mm_tokens):
+        raise AssertionError(
+            f"Number of UUIDs ({len(mm_uuids)}) does not match number of "
+            f"multimodal chunks ({len(num_mm_tokens)})")
     # Validate each chunk's position and length
     prompt_len = len(prompt_token_ids)
     # Verify start_positions are sorted
@@ -1048,3 +1127,20 @@ def validate_mm_inputs(prompt_token_ids: Union[torch.Tensor, List[int],
                     f"Multimodal chunk {chunk_idx} at position {start_pos} with length {chunk_len} "
                     f"overlaps with chunk {chunk_idx + 1} at position {next_start}"
                 )
+
+    if mm_encoder_output_lengths is not None:
+        for chunk_idx, encoder_len in enumerate(mm_encoder_output_lengths):
+            if not isinstance(encoder_len, int):
+                raise AssertionError(
+                    "Encoder-output length for multimodal chunk "
+                    f"{chunk_idx} must be an integer, got {type(encoder_len)}")
+            if encoder_len < 0:
+                raise AssertionError(
+                    "Encoder-output length for multimodal chunk "
+                    f"{chunk_idx} must be non-negative, got {encoder_len}")
+    if mm_modalities is not None:
+        for chunk_idx, modality in enumerate(mm_modalities):
+            if not isinstance(modality, str):
+                raise AssertionError(
+                    f"Modality for multimodal chunk {chunk_idx} must be a "
+                    f"string, got {type(modality)}")

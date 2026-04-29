@@ -707,12 +707,14 @@ def create_input_processor(
     return DefaultInputProcessor(None, None, tokenizer)
 
 
+def _mm_data_to_items(mm_data: Dict[str, Any]) -> Dict[str, List[Any]]:
+    """Normalize multimodal data to per-key item lists."""
+    return {k: (v if isinstance(v, list) else [v]) for k, v in mm_data.items()}
+
+
 def _mm_data_to_counts(mm_data: Dict[str, Any]) -> Dict[str, int]:
-    """Normalize multimodal data to per-key counts (each value as list length)."""
-    mm_items = {
-        k: (v if isinstance(v, list) else [v])
-        for k, v in mm_data.items()
-    }
+    """Normalize multimodal data to per-key counts."""
+    mm_items = _mm_data_to_items(mm_data)
     return {k: len(v) for k, v in mm_items.items()}
 
 
@@ -722,8 +724,8 @@ def _process_multimodal_with_dummy_placeholders(
     mm_counts: Dict[str, int],
     mm_processor_kwargs: Optional[Dict[str, Any]],
     sampling_params: SamplingParams,
-) -> ExtraProcessedInputs:
-    """Run input_processor with dummy text placeholders for multi-modal slots; return extra processed inputs."""
+) -> Tuple[str, ExtraProcessedInputs]:
+    """Run input_processor with dummy text placeholders for multi-modal slots."""
     dummy_text = input_processor.get_text_with_mm_placeholders(mm_counts)
     dummy_inputs = TextPrompt(
         prompt=dummy_text,
@@ -735,26 +737,184 @@ def _process_multimodal_with_dummy_placeholders(
     # it is reused later with the real token IDs so we do not run the vision encoder again.
     _, extra_processed_inputs = input_processor(dummy_inputs, sampling_params)
     if extra_processed_inputs is None:
-        return {}
-    return extra_processed_inputs
+        return dummy_text, {}
+    return dummy_text, extra_processed_inputs
 
 
-def _get_single_mm_token_lengths(
+def _get_layout_modalities(
+        multimodal_data: Optional[Dict[str, Any]]) -> Optional[List[str]]:
+    if multimodal_data is None:
+        return None
+    layout_metadata = multimodal_data.get("layout_metadata")
+    if layout_metadata is None:
+        return None
+    if not isinstance(layout_metadata, dict):
+        raise TypeError("multimodal_data['layout_metadata'] must be a dict")
+    return layout_metadata.get("modalities")
+
+
+def _ordered_items_from_modalities(
+    modalities: List[str],
+    mm_items: Dict[str, List[Any]],
+) -> List[Tuple[str, int]]:
+    if not isinstance(modalities, list):
+        raise TypeError("layout_metadata['modalities'] must be a list")
+    if not all(isinstance(modality, str) for modality in modalities):
+        raise TypeError(
+            "layout_metadata['modalities'] must contain only strings")
+
+    cursors = {modality: 0 for modality in mm_items}
+    ordered_items = []
+    for modality in modalities:
+        if modality not in mm_items:
+            raise ValueError(
+                f"Unknown modality '{modality}' in layout_metadata")
+        item_idx = cursors[modality]
+        if item_idx >= len(mm_items[modality]):
+            raise ValueError(
+                f"Too many '{modality}' entries in layout_metadata")
+        ordered_items.append((modality, item_idx))
+        cursors[modality] = item_idx + 1
+
+    for modality, items in mm_items.items():
+        if cursors[modality] != len(items):
+            raise ValueError(
+                f"layout_metadata['modalities'] has {cursors[modality]} "
+                f"entries for '{modality}', expected {len(items)}")
+    return ordered_items
+
+
+def _resolve_processor_model_type(
+        input_processor: BaseMultimodalInputProcessor) -> Optional[str]:
+    model_type = getattr(input_processor.__class__, "_registered_model_type",
+                         None)
+    if model_type is not None:
+        return model_type
+    config = getattr(input_processor, "config", None)
+    return getattr(config, "model_type", None)
+
+
+def _ordered_items_from_prompt(
+    prompt: Optional[str],
+    mm_items: Dict[str, List[Any]],
+    input_processor: BaseMultimodalInputProcessor,
+) -> Optional[List[Tuple[str, int]]]:
+    if not isinstance(prompt, str):
+        return None
+
+    model_type = _resolve_processor_model_type(input_processor)
+    if model_type is None:
+        return None
+    try:
+        placeholder_metadata = (MULTIMODAL_PLACEHOLDER_REGISTRY.
+                                get_placeholder_metadata(model_type))
+    except ValueError:
+        return None
+
+    matches = []
+    for modality, items in mm_items.items():
+        placeholder_template = placeholder_metadata.placeholder_map.get(
+            modality)
+        if placeholder_template is None:
+            return None
+        cursor = 0
+        for item_idx in range(len(items)):
+            placeholder = placeholder_template.format(item_idx + 1)
+            position = prompt.find(placeholder, cursor)
+            if position < 0:
+                return None
+            matches.append((position, modality, item_idx))
+            cursor = position + len(placeholder)
+
+    matches.sort(key=lambda item: item[0])
+    return [(modality, item_idx) for _, modality, item_idx in matches]
+
+
+def _get_ordered_mm_items(
     mm_data: Dict[str, Any],
     input_processor: BaseMultimodalInputProcessor,
     *,
+    prompt: Optional[str] = None,
+    multimodal_data: Optional[Dict[str, Any]] = None,
+) -> List[Tuple[str, int]]:
+    mm_items = _mm_data_to_items(mm_data)
+    layout_modalities = _get_layout_modalities(multimodal_data)
+    if layout_modalities is not None:
+        return _ordered_items_from_modalities(layout_modalities, mm_items)
+
+    ordered_items = _ordered_items_from_prompt(prompt, mm_items,
+                                               input_processor)
+    if ordered_items is not None:
+        return ordered_items
+
+    if len(mm_items) == 1:
+        modality, items = next(iter(mm_items.items()))
+        return [(modality, item_idx) for item_idx in range(len(items))]
+
+    raise ValueError(
+        "Cannot determine prompt item order for mixed multimodal data. "
+        "Provide layout_metadata['modalities'] or a prompt with registered "
+        "multimodal placeholders.")
+
+
+def _order_values_by_mm_items(
+    values_by_modality: Dict[str, List[Any]],
+    ordered_items: List[Tuple[str, int]],
+    field_name: str,
+) -> List[Any]:
+    ordered_values = []
+    for modality, item_idx in ordered_items:
+        if modality not in values_by_modality:
+            raise ValueError(f"{field_name} is missing modality '{modality}'")
+        values = values_by_modality[modality]
+        if item_idx >= len(values):
+            raise ValueError(
+                f"{field_name} has no item {item_idx} for modality "
+                f"'{modality}'")
+        ordered_values.append(values[item_idx])
+    return ordered_values
+
+
+def _normalize_mm_uuids(
+    mm_items: Dict[str, List[Any]],
+    mm_uuids: Optional[Dict[str, List[Optional[str]]]],
+) -> Optional[Dict[str, List[Optional[str]]]]:
+    if mm_uuids is None:
+        return None
+    if not isinstance(mm_uuids, dict):
+        raise TypeError("multi_modal_uuids must be a dict")
+
+    uuids_by_modality = {}
+    for modality, items in mm_items.items():
+        modality_uuids = mm_uuids.get(modality, [None] * len(items))
+        if not isinstance(modality_uuids, list):
+            modality_uuids = [modality_uuids]
+        if len(modality_uuids) != len(items):
+            raise ValueError(
+                f"UUID list length ({len(modality_uuids)}) doesn't match "
+                f"data items length ({len(items)}) for modality '{modality}'")
+        uuids_by_modality[modality] = modality_uuids
+    return uuids_by_modality
+
+
+def _get_ordered_mm_token_lengths(
+    mm_data: Dict[str, Any],
+    input_processor: BaseMultimodalInputProcessor,
+    ordered_items: List[Tuple[str, int]],
+    *,
     multimodal_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[List[int]]:
-    """Get the single set of MM token lengths (first value from find_mm_token_lengths). Returns None if empty."""
+    prompt_lengths = _get_layout_prompt_lengths(multimodal_data,
+                                                expected_len=len(ordered_items))
+    if prompt_lengths is not None:
+        return prompt_lengths
+
     num_mm_tokens_by_key = find_mm_token_lengths(
         mm_data, input_processor, multimodal_data=multimodal_data)
     if not num_mm_tokens_by_key:
         return None
-    # find_mm_token_lengths returns Dict[modality, List[int]], e.g. {"image": [2928, 2928]}.
-    # We need the list of per-item lengths (for _find_mm_token_start_pos_from_masks). We take
-    # the first modality's list; multi-modality is not yet supported
-    # (see TODO in multimodal_hashing_process).
-    num_mm_tokens = next(iter(num_mm_tokens_by_key.values()))
+    num_mm_tokens = _order_values_by_mm_items(num_mm_tokens_by_key,
+                                              ordered_items, "num_mm_tokens")
     if len(num_mm_tokens) <= 0:
         return None
     return num_mm_tokens
@@ -805,6 +965,54 @@ def maybe_compute_mm_embed_cumsum(
         0, dtype=torch.int64)
 
 
+def _get_layout_metadata(multimodal_data: Dict[str, Any]) -> Dict[str, Any]:
+    layout_metadata = multimodal_data.setdefault("layout_metadata", {})
+    if not isinstance(layout_metadata, dict):
+        raise TypeError("multimodal_data['layout_metadata'] must be a dict")
+    return layout_metadata
+
+
+def _metadata_int_list(value: Any,
+                       field_name: str,
+                       *,
+                       expected_len: Optional[int] = None) -> List[int]:
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu().tolist()
+    if not isinstance(value, list):
+        raise TypeError(f"{field_name} must be a list")
+    if not all(isinstance(item, int) for item in value):
+        raise TypeError(f"{field_name} must contain only integers")
+    if expected_len is not None and len(value) != expected_len:
+        raise ValueError(
+            f"{field_name} length ({len(value)}) must match number of "
+            f"multimodal items ({expected_len})")
+    if not all(item >= 0 for item in value):
+        raise ValueError(
+            f"{field_name} must contain only non-negative integers")
+    return list(value)
+
+
+def _get_layout_prompt_lengths(
+    multimodal_data: Optional[Dict[str, Any]],
+    *,
+    expected_len: int,
+) -> Optional[List[int]]:
+    if multimodal_data is None:
+        return None
+    layout_metadata = multimodal_data.get("layout_metadata")
+    if layout_metadata is None:
+        return None
+    if not isinstance(layout_metadata, dict):
+        raise TypeError("multimodal_data['layout_metadata'] must be a dict")
+    if "prompt_lengths" not in layout_metadata:
+        return None
+    return _metadata_int_list(
+        layout_metadata["prompt_lengths"],
+        "layout_metadata['prompt_lengths']",
+        expected_len=expected_len,
+    )
+
+
 def create_input_processor_with_hash(
     input_processor: BaseMultimodalInputProcessor,
     hash_lib=default_hasher,
@@ -841,18 +1049,26 @@ def create_input_processor_with_hash(
         prompt_token_ids = inputs["prompt_token_ids"]
         mm_data = inputs["multi_modal_data"]
         mm_counts = _mm_data_to_counts(mm_data)
-        extra_processed_inputs = _process_multimodal_with_dummy_placeholders(
-            input_processor,
+        dummy_text, extra_processed_inputs = (
+            _process_multimodal_with_dummy_placeholders(
+                input_processor,
+                mm_data,
+                mm_counts,
+                inputs.get("mm_processor_kwargs"),
+                sampling_params,
+            ))
+        multimodal_data = (extra_processed_inputs or {}).get("multimodal_data")
+        ordered_mm_items = _get_ordered_mm_items(
             mm_data,
-            mm_counts,
-            inputs.get("mm_processor_kwargs"),
-            sampling_params,
+            input_processor,
+            prompt=dummy_text,
+            multimodal_data=multimodal_data,
         )
-        num_mm_tokens = _get_single_mm_token_lengths(
+        num_mm_tokens = _get_ordered_mm_token_lengths(
             mm_data,
             input_processor,
-            multimodal_data=(extra_processed_inputs
-                             or {}).get("multimodal_data"),
+            ordered_mm_items,
+            multimodal_data=multimodal_data,
         )
         if num_mm_tokens is None:
             raise ValueError(
@@ -869,6 +1085,7 @@ def create_input_processor_with_hash(
             precomputed_token_ids=expanded_ids,
             precomputed_extra=extra_processed_inputs,
             precomputed_num_mm_tokens=num_mm_tokens,
+            precomputed_ordered_mm_items=ordered_mm_items,
         )
 
     def multimodal_hashing_process(
@@ -878,6 +1095,7 @@ def create_input_processor_with_hash(
         precomputed_token_ids: Optional[List[int]] = None,
         precomputed_extra: Optional[ExtraProcessedInputs] = None,
         precomputed_num_mm_tokens: Optional[List[int]] = None,
+        precomputed_ordered_mm_items: Optional[List[Tuple[str, int]]] = None,
     ) -> Tuple[List[int], Optional[ExtraProcessedInputs]]:
         """
         Process multimodal hashing for media tokens if possible.
@@ -900,7 +1118,8 @@ def create_input_processor_with_hash(
         # Extract optional UUIDs (can be None, or dict with same structure as mm_data)
         mm_uuids = inputs.get('multi_modal_uuids', None)
 
-        mm_hashes, mm_uuid_list = apply_mm_hashes(mm_data, mm_uuids, hash_lib)
+        mm_items = _mm_data_to_items(mm_data)
+        mm_hashes, _ = apply_mm_hashes(mm_data, mm_uuids, hash_lib)
 
         if precomputed_token_ids is not None and precomputed_extra is not None:
             prompt_token_ids = precomputed_token_ids
@@ -913,19 +1132,28 @@ def create_input_processor_with_hash(
                 "precomputed_token_ids and precomputed_extra must be provided "
                 "together or both be None; got one without the other.")
 
+        multimodal_data = extra_processed_inputs["multimodal_data"]
+        if precomputed_ordered_mm_items is not None:
+            ordered_mm_items = precomputed_ordered_mm_items
+        else:
+            ordered_mm_items = _get_ordered_mm_items(
+                mm_data,
+                input_processor,
+                prompt=inputs.get("prompt"),
+                multimodal_data=multimodal_data,
+            )
+
         if precomputed_num_mm_tokens is not None:
             num_mm_tokens = precomputed_num_mm_tokens
         else:
-            # TODO: here we assume there is only one modality for now
-            num_mm_tokens_by_key = find_mm_token_lengths(
+            num_mm_tokens = _get_ordered_mm_token_lengths(
                 mm_data,
                 input_processor,
-                multimodal_data=(extra_processed_inputs
-                                 or {}).get("multimodal_data"),
+                ordered_mm_items,
+                multimodal_data=multimodal_data,
             )
-            if not num_mm_tokens_by_key:
+            if num_mm_tokens is None:
                 return [], None
-            num_mm_tokens = next(iter(num_mm_tokens_by_key.values()))
         if len(num_mm_tokens) <= 0:
             return [], None
 
@@ -961,16 +1189,40 @@ def create_input_processor_with_hash(
                ) > 0 and mm_special_token_ids is not None:
             extra_processed_inputs["multimodal_data"][
                 "special_token_offsets"] = start_special_token_positions
-        # flatten the hashes from dict to a single list
-        mm_hashes_flat = [h for hashes in mm_hashes.values() for h in hashes]
+        mm_hashes_flat = _order_values_by_mm_items(mm_hashes, ordered_mm_items,
+                                                   "mm_hashes")
+        mm_modalities = [modality for modality, _ in ordered_mm_items]
+        mm_uuids_by_modality = _normalize_mm_uuids(mm_items, mm_uuids)
+        mm_uuid_list = None
+        if mm_uuids_by_modality is not None:
+            mm_uuid_list = _order_values_by_mm_items(mm_uuids_by_modality,
+                                                     ordered_mm_items,
+                                                     "multi_modal_uuids")
+        layout_metadata = _get_layout_metadata(multimodal_data)
+        if "encoder_output_lengths" in layout_metadata:
+            mm_encoder_output_lengths = _metadata_int_list(
+                layout_metadata["encoder_output_lengths"],
+                "layout_metadata['encoder_output_lengths']",
+                expected_len=len(ordered_mm_items))
+        else:
+            mm_encoder_output_lengths = list(num_mm_tokens)
+            layout_metadata["encoder_output_lengths"] = (
+                mm_encoder_output_lengths)
+        layout_metadata["modalities"] = mm_modalities
         validate_mm_inputs(prompt_token_ids, mm_hashes_flat, start_positions,
-                           num_mm_tokens)
+                           num_mm_tokens, mm_encoder_output_lengths,
+                           mm_modalities, mm_uuid_list)
         mm_hashes_int32 = [hexdigest_to_int32(h) for h in mm_hashes_flat
                            ]  # nested list w/ multiple int32 per hash
 
         extra_processed_inputs[
             "multimodal_input"] = MultimodalInput.from_components(
-                mm_hashes_int32, start_positions, num_mm_tokens, mm_uuid_list)
+                mm_hashes_int32,
+                start_positions,
+                num_mm_tokens,
+                mm_uuids=mm_uuid_list,
+                mm_modalities=mm_modalities,
+                mm_encoder_output_lengths=mm_encoder_output_lengths)
         return prompt_token_ids, extra_processed_inputs
 
     def process_tokenized_prompt_maybe_hash(
@@ -985,27 +1237,28 @@ def create_input_processor_with_hash(
     def process_prompt_maybe_hash(
         inputs: TextPrompt, sampling_params: SamplingParams
     ) -> Tuple[List[int], Optional[ExtraProcessedInputs]]:
-        try_multimodal_hashing = False  # only used for first time
-        use_multimodal_hashing = False  # used for subsequent calls
+        try_multimodal_hashing = False
+        use_multimodal_hashing = False
         modalities = list(set(inputs['multi_modal_data'].keys())
                           ) if 'multi_modal_data' in inputs else []
-        if len(modalities) > 0:
-            # TODO: support multimodal hashing for multiple modalities within the same request.
-            if len(modalities) == 1 and modalities[0] in [
-                    'image', 'video', 'audio'
-            ]:
-                # only try multimodal hashing if the inputs only contain a single modality.
-                if input_processor.multimodal_hashing_supported is not None:
-                    use_multimodal_hashing = input_processor.multimodal_hashing_supported
-                else:
-                    # we need to try the multimodal hashing for the first time to determine if it is supported
-                    try_multimodal_hashing = True
+        is_single_modality = len(modalities) == 1
+        supported_modalities = {'image', 'video', 'audio'}
+        if len(modalities) > 0 and all(modality in supported_modalities
+                                       for modality in modalities):
+            cached_hashing_supported = (
+                input_processor.multimodal_hashing_supported)
+            if is_single_modality and cached_hashing_supported is not None:
+                use_multimodal_hashing = cached_hashing_supported
+            else:
+                # Mixed item order is request-dependent, so only the
+                # single-modality path reuses the processor-level cache.
+                try_multimodal_hashing = True
 
         if try_multimodal_hashing or use_multimodal_hashing:
             try:
                 prompt_token_ids, extra_processed_inputs = multimodal_hashing_process(
                     inputs, sampling_params)
-                if try_multimodal_hashing:
+                if try_multimodal_hashing and is_single_modality:
                     # if trying for first time, set the flag to True
                     input_processor.multimodal_hashing_supported = True
             except Exception as e:
@@ -1013,7 +1266,8 @@ def create_input_processor_with_hash(
                 if try_multimodal_hashing:
                     # if trying for first time, fall back to basic input processor
                     # and set the flag to False so that we don't try again
-                    input_processor.multimodal_hashing_supported = False
+                    if is_single_modality:
+                        input_processor.multimodal_hashing_supported = False
                     logger.warning("Falling back to basic input processor.")
                     try:
                         prompt_token_ids, extra_processed_inputs = input_processor(
