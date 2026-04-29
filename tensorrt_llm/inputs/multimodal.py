@@ -670,6 +670,63 @@ def apply_mm_hashes(
         - Flattened list of original UUID strings (or None for content-hashed items)
     """
 
+    def _hash_payload(hasher, tag: bytes, payload: bytes):
+        hasher.update(tag)
+        hasher.update(len(payload).to_bytes(8, "big", signed=False))
+        hasher.update(payload)
+
+    def _hash_metadata_value(hasher, value):
+        if value is None:
+            _hash_payload(hasher, b"<none>", b"")
+        elif isinstance(value, bool):
+            _hash_payload(hasher, b"<bool>", b"\x01" if value else b"\x00")
+        elif isinstance(value, torch.Tensor):
+            value = value.detach().cpu().contiguous()
+            _hash_payload(hasher, b"<torch-dtype>", str(value.dtype).encode())
+            _hash_payload(hasher, b"<torch-shape>",
+                          repr(tuple(value.shape)).encode())
+            _hash_payload(hasher, b"<torch-data>", serialize_item(value))
+        elif isinstance(value, np.generic):
+            scalar = np.array(value)
+            _hash_payload(hasher, b"<numpy-scalar-dtype>",
+                          str(scalar.dtype).encode())
+            _hash_payload(hasher, b"<numpy-scalar-data>", scalar.tobytes())
+        elif isinstance(value, np.ndarray):
+            value = np.ascontiguousarray(value)
+            _hash_payload(hasher, b"<numpy-dtype>", str(value.dtype).encode())
+            _hash_payload(hasher, b"<numpy-shape>", repr(value.shape).encode())
+            _hash_payload(hasher, b"<numpy-data>", serialize_item(value))
+        elif isinstance(value, dict):
+            hasher.update(b"<dict>")
+            hasher.update(len(value).to_bytes(8, "big", signed=False))
+            for key in sorted(
+                    value,
+                    key=lambda item:
+                (type(item).__module__, type(item).__qualname__, repr(item))):
+                hasher.update(b"<key>")
+                _hash_metadata_value(hasher, key)
+                hasher.update(b"<value>")
+                _hash_metadata_value(hasher, value[key])
+            hasher.update(b"</dict>")
+        elif isinstance(value, (tuple, list)):
+            container_tag = b"<tuple>" if isinstance(value,
+                                                     tuple) else b"<list>"
+            hasher.update(container_tag)
+            hasher.update(len(value).to_bytes(8, "big", signed=False))
+            for item in value:
+                _hash_metadata_value(hasher, item)
+            hasher.update(
+                b"</tuple>" if isinstance(value, tuple) else b"</list>")
+        else:
+            type_tag = (f"<{type(value).__module__}.{type(value).__qualname__}>"
+                        .encode())
+            _hash_payload(hasher, type_tag, serialize_item(value))
+
+    def _hash_metadata(value):
+        metadata_hasher = hash_lib()
+        _hash_metadata_value(metadata_hasher, value)
+        return metadata_hasher.hexdigest().encode()
+
     def _hash_content(hasher, item):
         """Hash the content of a multimodal item into the provided hasher."""
         if isinstance(item, torch.Tensor):
@@ -686,10 +743,12 @@ def apply_mm_hashes(
         elif isinstance(item, tensorrt_llm.inputs.utils.VideoData):
             frames = item.frames
             for frame in frames:
-                hasher.update(b"<frame>")
                 if isinstance(frame, torch.Tensor):
                     frame = frame.detach().cpu().contiguous()
-                hasher.update(serialize_item(frame))
+                _hash_payload(hasher, b"<frame>", serialize_item(frame))
+            if item.metadata:
+                _hash_payload(hasher, b"<metadata>",
+                              _hash_metadata(item.metadata))
         else:
             hasher.update(serialize_item(item))
 

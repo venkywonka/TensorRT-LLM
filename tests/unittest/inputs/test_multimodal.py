@@ -2,6 +2,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 """Tests for MultimodalRuntimeData cumsum math and the flat-mask producer."""
 
+import numpy as np
 import pytest
 import torch
 
@@ -19,6 +20,7 @@ from tensorrt_llm.inputs.registry import (
     create_input_processor_with_hash,
     maybe_compute_mm_embed_cumsum,
 )
+from tensorrt_llm.inputs.utils import VideoData
 
 
 def _hash(seed):
@@ -211,6 +213,80 @@ def _mixed_mm_uuids():
         "image": ["image-a", "image-c"],
         "video": ["video-b"],
     }
+
+
+def test_video_hash_includes_metadata():
+    frame = torch.tensor([1, 2, 3], dtype=torch.uint8)
+    video_with_audio_a = VideoData(
+        frames=[frame],
+        metadata={
+            "audio_sample_rate": 16000,
+            "audio_samples": np.array([0.1, 0.2], dtype=np.float32),
+        },
+    )
+    video_with_audio_b = VideoData(
+        frames=[frame.clone()],
+        metadata={
+            "audio_sample_rate": 16000,
+            "audio_samples": np.array([0.1, 0.4], dtype=np.float32),
+        },
+    )
+    video_with_audio_c = VideoData(
+        frames=[frame.clone()],
+        metadata={
+            "audio_sample_rate": 8000,
+            "audio_samples": np.array([0.1, 0.2], dtype=np.float32),
+        },
+    )
+
+    hashes, _ = apply_mm_hashes(
+        {
+            "video": [video_with_audio_a, video_with_audio_b, video_with_audio_c],
+        }
+    )
+
+    assert hashes["video"][0] != hashes["video"][1]
+    assert hashes["video"][0] != hashes["video"][2]
+
+
+def test_video_hash_metadata_is_order_stable():
+    frame = torch.tensor([1, 2, 3], dtype=torch.uint8)
+    metadata_a = {
+        "total_num_frames": 3,
+        "fps": np.float32(30.0),
+        "duration": 0.1,
+        "frames_indices": [0, 1, 2],
+    }
+    metadata_b = {
+        "frames_indices": [0, 1, 2],
+        "duration": 0.1,
+        "fps": np.float32(30.0),
+        "total_num_frames": 3,
+    }
+
+    hashes, _ = apply_mm_hashes(
+        {
+            "video": [
+                VideoData(frames=[frame], metadata=metadata_a),
+                VideoData(frames=[frame.clone()], metadata=metadata_b),
+            ],
+        }
+    )
+
+    assert hashes["video"][0] == hashes["video"][1]
+
+
+def test_video_hash_rejects_unsupported_metadata_type():
+    frame = torch.tensor([1, 2, 3], dtype=torch.uint8)
+
+    with pytest.raises(ValueError, match="Unsupported object type"):
+        apply_mm_hashes(
+            {
+                "video": [
+                    VideoData(frames=[frame], metadata={"custom": object()}),
+                ],
+            }
+        )
 
 
 def test_hash_wrapper_populates_python_item_metadata():
