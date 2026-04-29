@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
 import copy
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -110,6 +113,16 @@ class Qwen3VLInputProcessorBase(BaseMultimodalInputProcessor, BaseMultimodalDumm
     def get_vocab_size(self) -> int:
         """Return the vocab size of the model."""
         return self.config.text_config.vocab_size
+
+    def get_mm_token_ids(self) -> torch.Tensor:
+        return torch.tensor(
+            [
+                self.config.image_token_id,
+                self.config.video_token_id,
+                self.tllm_multimodal_token_id,
+            ],
+            dtype=torch.int32,
+        )
 
     @classmethod
     def get_rope_index(
@@ -399,9 +412,9 @@ class Qwen3VLInputProcessorBase(BaseMultimodalInputProcessor, BaseMultimodalDumm
 
         Returns:
             Tuple[List[int], List[int], List[int]]:
-                - expanded_ids: token ids with each image token expanded to a placeholder repeated per MM token
-                - mm_token_length: per-image MM token lengths
-                - mm_token_offsets: start offsets (positions) for each image's MM tokens within expanded_ids
+                - expanded_ids: token ids with each image/video token expanded to one token per MM row
+                - mm_token_length: per-item MM token lengths in handle order
+                - mm_token_offsets: start offsets for each item's MM tokens within expanded_ids
         """
         # TODO: Move this function to the base input processor class when extending for more models
         text_prompt = inputs.get("prompt")
@@ -415,53 +428,86 @@ class Qwen3VLInputProcessorBase(BaseMultimodalInputProcessor, BaseMultimodalDumm
         # This is because, unlike previous Qwen VL models, the embeddings are concatenated with
         # feature maps from deepstack layers.
         expected_size = self.config.text_config.hidden_size * (1 + num_deepstack_levels)
+        mm_token_nums = []
         for i, mm_handle in enumerate(mm_handles):
-            hidden_size = mm_handle["tensor_size"][1]
+            if not isinstance(mm_handle, dict):
+                actual_type = type(mm_handle).__name__
+                raise ValueError(
+                    f"Qwen3VL multimodal embedding handle {i} must be a dict "
+                    f"with rank-2 tensor_size [rows, hidden], got {actual_type}."
+                )
+            tensor_size = mm_handle.get("tensor_size")
+            if not isinstance(tensor_size, (list, tuple)) or len(tensor_size) != 2:
+                raise ValueError(
+                    f"Qwen3VL multimodal embedding handle {i} must include "
+                    f"rank-2 tensor_size [rows, hidden], got {tensor_size}."
+                )
+            mm_token_num, hidden_size = tensor_size
+            if (
+                not isinstance(mm_token_num, int)
+                or isinstance(mm_token_num, bool)
+                or mm_token_num < 0
+            ):
+                raise ValueError(
+                    f"Qwen3VL multimodal embedding handle {i} tensor_size[0] "
+                    f"must be a non-negative integer row count, got {mm_token_num}."
+                )
+            if not isinstance(hidden_size, int) or isinstance(hidden_size, bool):
+                raise ValueError(
+                    f"Qwen3VL multimodal embedding handle {i} tensor_size[1] "
+                    f"must be an integer hidden size, got {hidden_size}."
+                )
             if hidden_size != expected_size:
                 raise RuntimeError(
-                    f"Expected multimodal embedding {i} to have hidden size {expected_size}, got {hidden_size}."
+                    f"Expected multimodal embedding {i} to have hidden size "
+                    f"{expected_size}, got {hidden_size}."
                 )
+            mm_token_nums.append(mm_token_num)
 
         input_ids = self.tokenizer(text_prompt, return_tensors="pt").input_ids[0]
 
-        # TODO: what about `video_token_id`?
-        image_token_index = self.config.image_token_id
+        image_token_id = self.config.image_token_id
+        video_token_id = self.config.video_token_id
+        mm_placeholder_token_ids = {image_token_id, video_token_id}
 
-        image_mask = input_ids == image_token_index
-        image_positions = torch.where(image_mask)[0]
-        num_images = len(image_positions)
-        assert num_images == len(mm_handles), "Number of images must match number of mm_handles"
-        total_mm_tokens = sum(mm_handle["tensor_size"][0] for mm_handle in mm_handles)
-        final_length = len(input_ids) - num_images + total_mm_tokens
-        # Create output tensor
-        expanded_ids = torch.empty(final_length, dtype=input_ids.dtype)
-        placeholder_id = self.tllm_multimodal_token_id
-
-        # Fill the expanded sequence
-        write_pos = 0
-        image_cnt = 0
+        expanded_ids = []
+        handle_idx = 0
         mm_token_length = []
         mm_token_offsets = []
-        for read_pos in range(len(input_ids)):
-            if input_ids[read_pos] == image_token_index:
-                # Replace with placeholder id
-                mm_token_num = mm_handles[image_cnt]["tensor_size"][0]
-                expanded_ids[write_pos : write_pos + mm_token_num] = placeholder_id
-                mm_token_offsets.append(write_pos)
+        for token_id in input_ids.tolist():
+            if token_id in mm_placeholder_token_ids:
+                if handle_idx >= len(mm_token_nums):
+                    raise ValueError(
+                        "Qwen3VL prompt has more image/video placeholders than "
+                        f"multimodal embedding handles: found placeholder {handle_idx + 1}, "
+                        f"got {len(mm_token_nums)} handles."
+                    )
+                mm_token_num = mm_token_nums[handle_idx]
+                mm_token_offsets.append(len(expanded_ids))
                 mm_token_length.append(mm_token_num)
-                write_pos += mm_token_num
-                image_cnt += 1
+                expanded_ids.extend([token_id] * mm_token_num)
+                handle_idx += 1
             else:
-                # Copy text token as-is
-                expanded_ids[write_pos] = input_ids[read_pos]
-                write_pos += 1
+                expanded_ids.append(token_id)
 
-        assert write_pos == final_length, f"Write position mismatch: {write_pos} != {final_length}"
-        assert mm_token_length[-1] + mm_token_offsets[-1] <= final_length, (
-            f"mm_token_length[-1] + mm_token_offsets[-1] ({mm_token_length[-1] + mm_token_offsets[-1]}) should be less "
-            f"than or equal to final_length ({final_length})"
+        if handle_idx != len(mm_token_nums):
+            raise ValueError(
+                f"Expected {len(mm_token_nums)} image/video placeholders for "
+                f"Qwen3VL multimodal embedding handles, found {handle_idx}."
+            )
+
+        final_length = len(expanded_ids)
+        if mm_token_length:
+            last_end = mm_token_length[-1] + mm_token_offsets[-1]
+            assert last_end <= final_length, (
+                "last Qwen3VL multimodal token span end "
+                f"({last_end}) must be <= final_length ({final_length})"
+            )
+        return (
+            torch.tensor(expanded_ids, dtype=torch.int32).tolist(),
+            mm_token_length,
+            mm_token_offsets,
         )
-        return expanded_ids.to(torch.int32).tolist(), mm_token_length, mm_token_offsets
 
 
 class Qwen3VLVisionAttention(Qwen2_5_VLVisionAttention):
@@ -849,25 +895,200 @@ class Qwen3VisionModelBase(nn.Module):
         self.visual.config.num_attention_heads = self.visual.config.num_heads
         _load_weights_impl(self.visual, converted_weights, params_map=pattern_mapping)
 
+    @staticmethod
+    def _metadata_int_list(value: Any, field_name: str) -> List[int]:
+        if isinstance(value, torch.Tensor):
+            value = value.detach().cpu().tolist()
+        if not isinstance(value, list):
+            raise TypeError(f"{field_name} must be a list")
+        if not all(isinstance(item, int) for item in value):
+            raise TypeError(f"{field_name} must contain only integers")
+        return list(value)
+
+    @staticmethod
+    def _metadata_str_list(value: Any, field_name: str) -> List[str]:
+        if not isinstance(value, list):
+            raise TypeError(f"{field_name} must be a list")
+        if not all(isinstance(item, str) for item in value):
+            raise TypeError(f"{field_name} must contain only strings")
+        return list(value)
+
+    def _encoder_lengths_from_grid(self, grid_thw: Optional[torch.Tensor]) -> List[int]:
+        if grid_thw is None:
+            return []
+        grid_thw = grid_thw.reshape(-1, 3).detach().cpu()
+        merge = self.config.spatial_merge_size
+        return [int(t) * (int(h) // merge) * (int(w) // merge) for t, h, w in grid_thw]
+
+    def _resolve_item_order(
+        self,
+        multimodal_param: MultimodalParams,
+        item_counts_by_modality: Dict[str, int],
+        output_lengths_by_modality: Dict[str, List[int]],
+        item_offsets_by_modality: Dict[str, int],
+    ) -> Tuple[List[Tuple[str, int, int]], Dict[str, List[int]]]:
+        multimodal_data = multimodal_param.multimodal_data
+        layout_metadata = multimodal_data.get("layout_metadata") or {}
+        if not isinstance(layout_metadata, dict):
+            raise TypeError("multimodal_data['layout_metadata'] must be a dict")
+
+        modalities = layout_metadata.get("modalities")
+        encoder_output_lengths = layout_metadata.get("encoder_output_lengths")
+        if multimodal_param.multimodal_input is not None:
+            if modalities is None:
+                modalities = multimodal_param.multimodal_input.multimodal_modalities
+            if encoder_output_lengths is None:
+                encoder_output_lengths = (
+                    multimodal_param.multimodal_input.multimodal_encoder_output_lengths
+                )
+
+        if modalities is None:
+            present_modalities = [
+                modality
+                for modality, item_count in item_counts_by_modality.items()
+                if item_count > 0
+            ]
+            if len(present_modalities) > 1:
+                raise ValueError(
+                    "Qwen3VL mixed image/video requests require ordered item metadata "
+                    "in layout_metadata['modalities'] or MultimodalInput.multimodal_modalities."
+                )
+            if not present_modalities:
+                return [], {"image": [], "video": []}
+            modality = present_modalities[0]
+            modalities = [modality] * item_counts_by_modality[modality]
+        else:
+            modalities = self._metadata_str_list(modalities, "layout_metadata['modalities']")
+
+        if encoder_output_lengths is None:
+            encoder_output_lengths = self._derive_encoder_lengths_from_order(
+                modalities, output_lengths_by_modality
+            )
+        else:
+            encoder_output_lengths = self._metadata_int_list(
+                encoder_output_lengths,
+                "layout_metadata['encoder_output_lengths']",
+            )
+
+        expected_items = sum(item_counts_by_modality.values())
+        if len(modalities) != expected_items:
+            raise ValueError(
+                f"Qwen3VL item metadata has {len(modalities)} modalities, "
+                f"expected {expected_items} items."
+            )
+        if len(encoder_output_lengths) != expected_items:
+            raise ValueError(
+                "Qwen3VL item metadata has "
+                f"{len(encoder_output_lengths)} encoder lengths, "
+                f"expected {expected_items} items."
+            )
+
+        local_cursors = {"image": 0, "video": 0}
+        item_lengths_by_modality: Dict[str, List[int]] = {
+            "image": [0] * item_counts_by_modality["image"],
+            "video": [0] * item_counts_by_modality["video"],
+        }
+        ordered_items: List[Tuple[str, int, int]] = []
+        for modality, encoder_length in zip(modalities, encoder_output_lengths):
+            if modality not in item_counts_by_modality:
+                raise ValueError(f"Unsupported Qwen3VL modality '{modality}'")
+            local_item_idx = local_cursors[modality]
+            if local_item_idx >= item_counts_by_modality[modality]:
+                raise ValueError(f"Too many Qwen3VL '{modality}' entries in item metadata.")
+            if encoder_length < 0:
+                raise ValueError(
+                    f"Qwen3VL encoder-output length must be non-negative, got {encoder_length}."
+                )
+
+            item_lengths_by_modality[modality][local_item_idx] = encoder_length
+            ordered_items.append(
+                (
+                    modality,
+                    item_offsets_by_modality[modality] + local_item_idx,
+                    encoder_length,
+                )
+            )
+            local_cursors[modality] = local_item_idx + 1
+
+        for modality, item_count in item_counts_by_modality.items():
+            if local_cursors[modality] != item_count:
+                raise ValueError(
+                    f"Qwen3VL item metadata has {local_cursors[modality]} "
+                    f"entries for '{modality}', expected {item_count}."
+                )
+
+        return ordered_items, item_lengths_by_modality
+
+    def _derive_encoder_lengths_from_order(
+        self,
+        modalities: List[str],
+        output_lengths_by_modality: Dict[str, List[int]],
+    ) -> List[int]:
+        local_cursors = {"image": 0, "video": 0}
+        encoder_output_lengths = []
+        for modality in modalities:
+            if modality not in output_lengths_by_modality:
+                raise ValueError(f"Unsupported Qwen3VL modality '{modality}'")
+            local_item_idx = local_cursors[modality]
+            if local_item_idx >= len(output_lengths_by_modality[modality]):
+                raise ValueError(f"Too many Qwen3VL '{modality}' entries in item metadata.")
+            encoder_output_lengths.append(output_lengths_by_modality[modality][local_item_idx])
+            local_cursors[modality] = local_item_idx + 1
+        return encoder_output_lengths
+
     def _parse_and_batch_multimodal_data(
         self, multimodal_params: List[MultimodalParams]
-    ) -> Tuple[Dict[str, Any], Dict[str, List[Any]]]:
+    ) -> Tuple[
+        Dict[str, Any],
+        Dict[str, Any],
+        List[Tuple[str, int, int]],
+        Dict[str, List[int]],
+    ]:
         pixel_values_list = []
         pixel_values_videos_list = []
         image_grid_thw_list = []
         video_grid_thw_list = []
+        ordered_items = []
+        encoder_lengths_by_modality: Dict[str, List[int]] = {
+            "image": [],
+            "video": [],
+        }
+        item_offsets_by_modality = {"image": 0, "video": 0}
 
         for multimodal_param in multimodal_params:
             multimodal_data = multimodal_param.multimodal_data
+            output_lengths_by_modality = {"image": [], "video": []}
             # Process images if present
             if multimodal_data.get("image") is not None:
                 pixel_values_list.append(multimodal_data["image"]["pixel_values"])
-                image_grid_thw_list.append(multimodal_data["image"]["image_grid_thw"])
+                image_grid_thw = multimodal_data["image"]["image_grid_thw"]
+                image_grid_thw_list.append(image_grid_thw)
+                output_lengths_by_modality["image"] = self._encoder_lengths_from_grid(
+                    image_grid_thw
+                )
 
             # Process videos if present
             if multimodal_data.get("video") is not None:
                 pixel_values_videos_list.append(multimodal_data["video"]["pixel_values_videos"])
-                video_grid_thw_list.append(multimodal_data["video"]["video_grid_thw"])
+                video_grid_thw = multimodal_data["video"]["video_grid_thw"]
+                video_grid_thw_list.append(video_grid_thw)
+                output_lengths_by_modality["video"] = self._encoder_lengths_from_grid(
+                    video_grid_thw
+                )
+
+            item_counts_by_modality = {
+                modality: len(lengths) for modality, lengths in output_lengths_by_modality.items()
+            }
+            param_ordered_items, param_lengths_by_modality = self._resolve_item_order(
+                multimodal_param,
+                item_counts_by_modality,
+                output_lengths_by_modality,
+                item_offsets_by_modality,
+            )
+            ordered_items.extend(param_ordered_items)
+            for modality, lengths in param_lengths_by_modality.items():
+                encoder_lengths_by_modality[modality].extend(lengths)
+                item_offsets_by_modality[modality] += item_counts_by_modality[modality]
 
         # Concatenate tensors
         mm_content_dict = {}
@@ -899,21 +1120,37 @@ class Qwen3VisionModelBase(nn.Module):
                 else video_grid_thw_list[0]
             )
 
-        return mm_content_dict, mm_extra_data
+        return mm_content_dict, mm_extra_data, ordered_items, encoder_lengths_by_modality
+
+    @staticmethod
+    def _split_embeds_by_item(
+        embeds: torch.Tensor, encoder_lengths: List[int], modality: str
+    ) -> List[torch.Tensor]:
+        if not encoder_lengths:
+            return []
+        expected_length = sum(encoder_lengths)
+        if embeds.shape[0] != expected_length:
+            raise ValueError(
+                f"Qwen3VL {modality} encoder returned {embeds.shape[0]} rows, "
+                f"expected {expected_length} from item metadata."
+            )
+        return list(torch.split(embeds, encoder_lengths, dim=0))
 
     @torch.inference_mode()
     def forward(self, multimodal_params: List[MultimodalParams]) -> List[torch.Tensor]:
-        mm_content_data, mm_extra_data = self._parse_and_batch_multimodal_data(multimodal_params)
+        (
+            mm_content_data,
+            mm_extra_data,
+            ordered_items,
+            encoder_lengths_by_modality,
+        ) = self._parse_and_batch_multimodal_data(multimodal_params)
         pixel_values = mm_content_data.get("pixel_values", None)
         pixel_values_videos = mm_content_data.get("pixel_values_videos", None)
-
-        if pixel_values is not None and pixel_values_videos is not None:
-            raise ValueError("Currently only support single modality per request")
 
         image_grid_thw = mm_extra_data.get("image_grid_thw", None)
         video_grid_thw = mm_extra_data.get("video_grid_thw", None)
 
-        embeds = []
+        embeds_by_modality = {"image": [], "video": []}
         if pixel_values is not None:
             pixel_values = pixel_values.to(self.model_dtype)
             image_embeds, deepstack_image_embeds = self.visual(
@@ -922,7 +1159,11 @@ class Qwen3VisionModelBase(nn.Module):
             # NOTE: We concatenate deepstack_embeds to mm_embeds
             # The shape will be [seq_len, hidden_dim * (num_deepstack_layers + 1)]
             mixed_image_embeds = torch.cat([image_embeds] + deepstack_image_embeds, dim=1)
-            embeds.append(mixed_image_embeds)
+            embeds_by_modality["image"] = self._split_embeds_by_item(
+                mixed_image_embeds,
+                encoder_lengths_by_modality["image"],
+                "image",
+            )
 
         if pixel_values_videos is not None:
             pixel_values_videos = pixel_values_videos.to(self.model_dtype)
@@ -932,8 +1173,19 @@ class Qwen3VisionModelBase(nn.Module):
             # NOTE: We concatenate deepstack_embeds to mm_embeds
             # The shape will be [seq_len, hidden_dim * (num_deepstack_layers + 1)]
             mixed_video_embeds = torch.cat([video_embeds] + deepstack_video_embeds, dim=1)
-            embeds.append(mixed_video_embeds)
-        return embeds
+            embeds_by_modality["video"] = self._split_embeds_by_item(
+                mixed_video_embeds,
+                encoder_lengths_by_modality["video"],
+                "video",
+            )
+
+        if not ordered_items:
+            return []
+
+        ordered_embeds = [
+            embeds_by_modality[modality][item_idx] for modality, item_idx, _ in ordered_items
+        ]
+        return [torch.cat(ordered_embeds, dim=0)]
 
 
 class Qwen3VLModelBase(PreTrainedModel):
@@ -977,6 +1229,14 @@ class Qwen3VLModelBase(PreTrainedModel):
         self.use_deepstack = hasattr(config.vision_config, "deepstack_visual_indexes")
         self.deepstack_num_level = (
             len(config.vision_config.deepstack_visual_indexes) if self.use_deepstack else 0
+        )
+        self.mm_token_ids = torch.tensor(
+            [
+                config.image_token_id,
+                config.video_token_id,
+                config.text_config.vocab_size + 1,
+            ],
+            dtype=torch.int32,
         )
 
         self.post_config()
@@ -1128,6 +1388,7 @@ class Qwen3VLModelBase(PreTrainedModel):
             self.llm.model.embed_tokens,
             input_ids,
             mm_embeds,
+            mm_token_ids=self.mm_token_ids,
             extra_embeds=deepstack_embeds,
             **kwargs,
         )
