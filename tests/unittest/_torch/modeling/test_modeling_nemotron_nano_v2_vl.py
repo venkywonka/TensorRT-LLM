@@ -19,6 +19,7 @@ from tensorrt_llm._torch.models.modeling_nemotron_nano import (
 )
 from tensorrt_llm._torch.models.modeling_parakeet import ProjectedParakeet
 from tensorrt_llm.inputs import (
+    VideoData,
     create_input_processor,
     create_input_processor_with_hash,
     default_multimodal_input_loader,
@@ -215,6 +216,456 @@ def test_nemotron_nano_v2_vl_model_sanity_check(
         )
     else:
         print("Passed! Max difference is within tolerance")
+
+
+class TestNanoMixedModality:
+    @staticmethod
+    def _make_input_processor():
+        processor = object.__new__(NanoV2VLInputProcessor)
+        processor.img_context_token = "<image>"
+        processor.video_context_token = "<video>"
+        processor.video_pruning_rate = 0.0
+        processor.dynamic_tiler = None
+        processor._add_video_prefix = False
+        return processor
+
+    @staticmethod
+    def _make_tokenizer():
+        token_map = [
+            ("<so_embedding>", 21),
+            ("<so_start>", 30),
+            ("<so_end>", 31),
+            ("</img>", 11),
+            ("<image>", 20),
+            ("<video>", 20),
+            ("<img>", 10),
+        ]
+
+        def encode(text, add_special_tokens=False, return_tensors=None, **kwargs):
+            token_ids = []
+            cursor = 0
+            while cursor < len(text):
+                for token, token_id in token_map:
+                    if text.startswith(token, cursor):
+                        token_ids.append(token_id)
+                        cursor += len(token)
+                        break
+                else:
+                    if not text[cursor].isspace():
+                        token_ids.append(1)
+                    cursor += 1
+            if return_tensors == "pt":
+                return torch.tensor([token_ids], dtype=torch.int64)
+            return token_ids
+
+        tokenizer = MagicMock()
+        tokenizer.encode.side_effect = encode
+        return tokenizer
+
+    @staticmethod
+    def _configure_hashing_processor(processor):
+        processor._tokenizer = TestNanoMixedModality._make_tokenizer()
+        processor._dtype = torch.float32
+        processor._multimodal_hashing_supported = None
+        processor.img_start_token = "<img>"
+        processor.img_end_token = "</img>"
+        processor._sound_context_token = "<so_embedding>"
+        processor._sound_start = "<so_start>"
+        processor._sound_end = "<so_end>"
+        processor.img_context_token_id = 20
+        processor.image_start_token_id = 10
+        processor.image_end_token_id = 11
+        processor._sound_context_token_id = 21
+        processor._sound_start_token_id = 30
+        processor._sound_end_token_id = 31
+        processor.get_vocab_size = MagicMock(return_value=None)
+
+    @pytest.mark.parametrize(
+        "prompt,image_expanded_prompt,expected_modalities",
+        [
+            ("A <image> B <video> C", "A <image-expanded> B <video> C", ["image", "video"]),
+            ("A <video> B <image> C", "A <video> B <image-expanded> C", ["video", "image"]),
+        ],
+    )
+    def test_input_processor_preserves_image_video_prompt_order(
+        self, prompt, image_expanded_prompt, expected_modalities
+    ):
+        processor = self._make_input_processor()
+        image_item = {"pixel_values": torch.tensor([[1.0]]), "evs_ids": None}
+        video_item = {"pixel_values": torch.tensor([[2.0]]), "video_size": [[1, 1, 1, 1]]}
+        processor._process_images_for_prompt = MagicMock(
+            return_value=({}, image_expanded_prompt, [5], [1], [image_item])
+        )
+        processor._process_videos_for_prompt = MagicMock(
+            return_value=({}, torch.tensor([[1, 2, 3]]), None, [7], [2], [video_item])
+        )
+
+        prompt_token_ids, extra = NanoV2VLInputProcessor.__call__(
+            processor,
+            {
+                "prompt": prompt,
+                "multi_modal_data": {
+                    "image": ["image-data"],
+                    "video": ["video-data"],
+                },
+            },
+            sampling_params=None,
+        )
+
+        assert prompt_token_ids == [1, 2, 3]
+        processor._process_videos_for_prompt.assert_called_once()
+        assert processor._process_videos_for_prompt.call_args.args[1] == image_expanded_prompt
+
+        multimodal_data = extra["multimodal_data"]
+        assert multimodal_data["modality_type"] == "mixed"
+        assert multimodal_data["layout_metadata"] == {
+            "modalities": expected_modalities,
+            "prompt_lengths": ([5, 7] if expected_modalities == ["image", "video"] else [7, 5]),
+            "encoder_output_lengths": (
+                [1, 2] if expected_modalities == ["image", "video"] else [2, 1]
+            ),
+        }
+        assert [item["modality_type"] for item in multimodal_data["items"]] == expected_modalities
+
+    def test_encode_multimodal_handles_mixed_image_video_with_audio(self):
+        hidden = 4
+        image_emb = torch.randn(2, hidden)
+        video_emb = torch.randn(3, hidden)
+        audio_emb = torch.randn(1, hidden)
+        video_tokens = torch.tensor([3])
+        audio_data = {
+            "input_audio_features": torch.randn(1, 80, 8),
+            "feature_attention_mask": torch.ones(1, 8),
+            "has_audio": [True],
+            "audio_num_clips": torch.tensor([1]),
+        }
+        param = MultimodalParams(
+            multimodal_data={
+                "modality_type": "mixed",
+                "items": [
+                    {
+                        "modality_type": "image",
+                        "image": {"pixel_values": torch.randn(1, 3, 2, 2)},
+                    },
+                    {
+                        "modality_type": "video",
+                        "video": {
+                            "pixel_values": torch.randn(1, 3, 2, 2),
+                            "video_size": [[1, 1, 2, 2]],
+                            "audio": audio_data,
+                        },
+                    },
+                ],
+            }
+        )
+
+        model = MagicMock()
+        model.vision_encoder = MagicMock(
+            side_effect=[([image_emb], [None]), ([video_emb], [video_tokens])]
+        )
+        model.sound_encoder = MagicMock()
+        model._encode_audio_data = MagicMock(return_value=(audio_emb, [1]))
+        model._interleave_video_audio_embeddings = MagicMock(
+            return_value=torch.cat([video_emb, audio_emb], dim=0)
+        )
+
+        result = NemotronH_Nano_VL_V2._encode_multimodal(model, [param])
+
+        expected = torch.cat([image_emb, video_emb, audio_emb], dim=0)
+        assert len(result) == 1
+        assert torch.equal(result[0], expected)
+        model._encode_audio_data.assert_called_once_with(audio_data)
+        torch.testing.assert_close(param.multimodal_data["num_tokens_in_video"], video_tokens)
+
+    def test_mixed_evs_rewrites_only_video_placeholders(self):
+        model = MagicMock()
+        model.video_context_token_id = 77
+        model.img_context_token_id = 55
+        input_ids = torch.tensor([11, 55, 55, 55, 22, 99], dtype=torch.int32)
+        evs_ids = torch.tensor([11, 55, 77, 22], dtype=torch.int32)
+        param = MultimodalParams(
+            multimodal_data={
+                "modality_type": "mixed",
+                "evs_ids": evs_ids,
+            }
+        )
+
+        result = NemotronH_Nano_VL_V2.merge_evs_mm_embeds(
+            model,
+            [torch.tensor([2])],
+            [param],
+            input_ids.clone(),
+        )
+
+        torch.testing.assert_close(
+            result, torch.tensor([11, 55, 55, 55, 22, 99], dtype=torch.int32)
+        )
+
+    def test_hash_metadata_uses_encoder_lengths_for_single_image(self):
+        processor = self._make_input_processor()
+        self._configure_hashing_processor(processor)
+        processor.get_num_tokens_per_image = MagicMock(
+            side_effect=AssertionError("layout prompt_lengths should be used")
+        )
+        processor._process_images_for_prompt = MagicMock(
+            return_value=(
+                {
+                    "pixel_values": torch.ones(1, 3, 2, 2),
+                    "num_patches": torch.tensor([1]),
+                },
+                "A <img><image><image><image></img> Z",
+                [5],
+                [3],
+                [],
+            )
+        )
+        wrapped = create_input_processor_with_hash(processor)
+
+        _, extra = wrapped(
+            {
+                "prompt": "A <image> Z",
+                "multi_modal_data": {"image": ["image-data"]},
+            },
+            sampling_params=None,
+        )
+
+        assert "multimodal_input" in extra
+        multimodal_input = extra["multimodal_input"]
+        assert multimodal_input.multimodal_lengths == [5]
+        assert multimodal_input.multimodal_encoder_output_lengths == [3]
+        assert extra["multimodal_data"]["layout_metadata"] == {
+            "prompt_lengths": [5],
+            "encoder_output_lengths": [3],
+            "modalities": ["image"],
+        }
+        processor.get_num_tokens_per_image.assert_not_called()
+
+    def test_hash_metadata_uses_encoder_lengths_for_single_audio(self):
+        processor = self._make_input_processor()
+        self._configure_hashing_processor(processor)
+        processor.get_num_tokens_per_audio = MagicMock(
+            side_effect=AssertionError("layout prompt_lengths should be used")
+        )
+        processor._process_audio = MagicMock(
+            return_value=(
+                torch.tensor([[1, 30, 21, 21, 21, 21, 31, 1]], dtype=torch.int64),
+                {
+                    "input_audio_features": torch.ones(1, 80, 8),
+                    "feature_attention_mask": torch.ones(1, 8),
+                    "audio_num_clips": torch.tensor([1]),
+                    "num_tokens_per_audio": [4],
+                    "prompt_tokens_per_audio": [6],
+                },
+            )
+        )
+        wrapped = create_input_processor_with_hash(processor)
+
+        _, extra = wrapped(
+            {
+                "prompt": "A <so_embedding> Z",
+                "multi_modal_data": {"audio": [np.zeros(8, dtype=np.float32)]},
+            },
+            sampling_params=None,
+        )
+
+        assert "multimodal_input" in extra
+        multimodal_input = extra["multimodal_input"]
+        assert multimodal_input.multimodal_lengths == [6]
+        assert multimodal_input.multimodal_encoder_output_lengths == [4]
+        assert extra["multimodal_data"]["layout_metadata"] == {
+            "prompt_lengths": [6],
+            "encoder_output_lengths": [4],
+            "modalities": ["audio"],
+        }
+        processor.get_num_tokens_per_audio.assert_not_called()
+
+    def test_hash_metadata_counts_audio_prompt_tokens_for_video(self):
+        processor = self._make_input_processor()
+        processor._tokenizer = self._make_tokenizer()
+        processor._dtype = torch.float32
+        processor._multimodal_hashing_supported = None
+        processor.img_start_token = "<img>"
+        processor.img_end_token = "</img>"
+        processor._sound_context_token = "<so_embedding>"
+        processor._sound_start = "<so_start>"
+        processor._sound_end = "<so_end>"
+        processor.img_context_token_id = 20
+        processor.image_start_token_id = 10
+        processor.image_end_token_id = 11
+        processor._sound_context_token_id = 21
+        processor._sound_start_token_id = 30
+        processor._sound_end_token_id = 31
+        processor.get_vocab_size = MagicMock(return_value=None)
+        processor.get_num_tokens_per_video = MagicMock(
+            side_effect=AssertionError("layout prompt_lengths should be used")
+        )
+        processor._get_video_tokens_per_frame = MagicMock(return_value=3)
+        processor._process_videos_frames = MagicMock(
+            return_value={
+                "num_patches": torch.tensor([1]),
+                "pixel_values": torch.ones(1, 3, 2, 2),
+                "video_size": [[1, 1, 2, 2]],
+            }
+        )
+        processor._compute_token_numbers_per_video = MagicMock(return_value=[[3]])
+        processor._get_frame_separators = MagicMock(return_value=[["Frame 1: "]])
+
+        def extract_audio(text_prompt, video_metadatas):
+            expanded_audio_prompt = (
+                "<so_start><so_embedding><so_embedding><so_embedding><so_embedding><so_end>"
+            )
+            return text_prompt.replace("<video>", f"<video>{expanded_audio_prompt}"), {
+                "input_audio_features": torch.ones(1, 80, 8),
+                "feature_attention_mask": torch.ones(1, 8),
+                "audio_num_clips": torch.tensor([1]),
+                "has_audio": [True],
+                "num_tokens_per_audio": [4],
+                "prompt_tokens_per_audio": [6],
+            }
+
+        processor._extract_audio_from_video = MagicMock(side_effect=extract_audio)
+        wrapped = create_input_processor_with_hash(processor)
+        video = VideoData(
+            frames=[torch.ones(3, 2, 2)],
+            metadata={
+                "fps": 1,
+                "frames_indices": [0],
+                "audio_samples": np.zeros(8, dtype=np.float32),
+                "audio_sample_rate": 16000,
+            },
+        )
+
+        _, extra = wrapped(
+            {
+                "prompt": "A <video> Z",
+                "multi_modal_data": {"video": [video]},
+            },
+            sampling_params=None,
+        )
+
+        assert "multimodal_input" in extra
+        multimodal_input = extra["multimodal_input"]
+        assert multimodal_input.multimodal_lengths == [11]
+        assert multimodal_input.multimodal_encoder_output_lengths == [7]
+        assert extra["multimodal_data"]["layout_metadata"] == {
+            "prompt_lengths": [11],
+            "encoder_output_lengths": [7],
+            "modalities": ["video"],
+        }
+        processor.get_num_tokens_per_video.assert_not_called()
+        assert not hasattr(processor, "_video_prompt_lengths_by_frames_id")
+
+    def test_hash_metadata_preserves_duplicate_video_frame_lengths_in_order(self):
+        processor = self._make_input_processor()
+        processor._tokenizer = self._make_tokenizer()
+        processor._dtype = torch.float32
+        processor._multimodal_hashing_supported = None
+        processor.img_start_token = "<img>"
+        processor.img_end_token = "</img>"
+        processor._sound_context_token = "<so_embedding>"
+        processor._sound_start = "<so_start>"
+        processor._sound_end = "<so_end>"
+        processor.img_context_token_id = 20
+        processor.image_start_token_id = 10
+        processor.image_end_token_id = 11
+        processor._sound_context_token_id = 21
+        processor._sound_start_token_id = 30
+        processor._sound_end_token_id = 31
+        processor.get_vocab_size = MagicMock(return_value=None)
+        processor.get_num_tokens_per_video = MagicMock(
+            side_effect=AssertionError("layout prompt_lengths should be used")
+        )
+        processor._get_video_tokens_per_frame = MagicMock(return_value=3)
+        processor._process_videos_frames = MagicMock(
+            return_value={
+                "num_patches": torch.tensor([1, 1]),
+                "pixel_values": torch.ones(2, 3, 2, 2),
+                "video_size": [[1, 1, 2, 2], [1, 1, 2, 2]],
+            }
+        )
+        processor._compute_token_numbers_per_video = MagicMock(return_value=[[3], [3]])
+        processor._get_frame_separators = MagicMock(return_value=[["Frame 1: "], ["Frame 1: "]])
+
+        def extract_audio(text_prompt, video_metadatas):
+            has_audio = [meta is not None and "audio_samples" in meta for meta in video_metadatas]
+            expanded_audio_prompt = (
+                "<so_start><so_embedding><so_embedding><so_embedding><so_embedding><so_end>"
+            )
+            parts = text_prompt.split("<video>")
+            rebuilt = [parts[0]]
+            for audio_present, part in zip(has_audio, parts[1:]):
+                rebuilt.append("<video>")
+                if audio_present:
+                    rebuilt.append(expanded_audio_prompt)
+                rebuilt.append(part)
+            return "".join(rebuilt), {
+                "input_audio_features": torch.ones(1, 80, 8),
+                "feature_attention_mask": torch.ones(1, 8),
+                "audio_num_clips": torch.tensor([1]),
+                "has_audio": has_audio,
+                "num_tokens_per_audio": [4],
+                "prompt_tokens_per_audio": [6],
+            }
+
+        processor._extract_audio_from_video = MagicMock(side_effect=extract_audio)
+        wrapped = create_input_processor_with_hash(processor)
+        shared_frames = [torch.ones(3, 2, 2)]
+        video_without_audio = VideoData(
+            frames=shared_frames,
+            metadata={"fps": 1, "frames_indices": [0]},
+        )
+        video_with_audio = VideoData(
+            frames=shared_frames,
+            metadata={
+                "fps": 1,
+                "frames_indices": [0],
+                "audio_samples": np.zeros(8, dtype=np.float32),
+                "audio_sample_rate": 16000,
+            },
+        )
+
+        _, extra = wrapped(
+            {
+                "prompt": "A <video> B <video> Z",
+                "multi_modal_data": {
+                    "video": [video_without_audio, video_with_audio],
+                },
+            },
+            sampling_params=None,
+        )
+
+        assert "multimodal_input" in extra
+        multimodal_input = extra["multimodal_input"]
+        assert multimodal_input.multimodal_lengths == [5, 11]
+        assert multimodal_input.multimodal_encoder_output_lengths == [3, 7]
+        assert extra["multimodal_data"]["layout_metadata"] == {
+            "prompt_lengths": [5, 11],
+            "encoder_output_lengths": [3, 7],
+            "modalities": ["video", "video"],
+        }
+        processor.get_num_tokens_per_video.assert_not_called()
+        assert not hasattr(processor, "_video_prompt_lengths_by_frames_id")
+
+        _, second_extra = wrapped(
+            {
+                "prompt": "A <video> B <video> Z",
+                "multi_modal_data": {
+                    "video": [video_with_audio, video_without_audio],
+                },
+            },
+            sampling_params=None,
+        )
+
+        second_multimodal_input = second_extra["multimodal_input"]
+        assert second_multimodal_input.multimodal_lengths == [11, 5]
+        assert second_multimodal_input.multimodal_encoder_output_lengths == [7, 3]
+        assert second_extra["multimodal_data"]["layout_metadata"] == {
+            "prompt_lengths": [11, 5],
+            "encoder_output_lengths": [7, 3],
+            "modalities": ["video", "video"],
+        }
+        processor.get_num_tokens_per_video.assert_not_called()
+        assert not hasattr(processor, "_video_prompt_lengths_by_frames_id")
 
 
 class TestEncodeMultimodalDispatch:
