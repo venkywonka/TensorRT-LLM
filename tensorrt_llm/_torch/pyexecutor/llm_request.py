@@ -44,6 +44,120 @@ if TYPE_CHECKING:
     from .sampling_utils import Strategy
 
 
+def _validate_mm_embedding_lengths(
+        lengths: Any,
+        *,
+        source: str,
+        expected_items: Optional[int] = None,
+        total_length: Optional[int] = None) -> List[int]:
+    if hasattr(lengths, "tolist"):
+        lengths = lengths.tolist()
+    if not isinstance(lengths, (list, tuple)):
+        raise TypeError(f"{source} must be a list of integers")
+
+    result = []
+    for idx, length in enumerate(lengths):
+        if not isinstance(length, int) or isinstance(length, bool):
+            raise TypeError(
+                f"{source}[{idx}] must be an integer, got {type(length)}")
+        if length < 0:
+            raise ValueError(
+                f"{source}[{idx}] must be non-negative, got {length}")
+        result.append(length)
+
+    if expected_items is not None and len(result) != expected_items:
+        raise ValueError(
+            f"{source} length ({len(result)}) does not match expected item "
+            f"count ({expected_items})")
+    if total_length is not None and sum(result) != total_length:
+        raise ValueError(
+            f"mm_embedding shape mismatch: {total_length} != {sum(result)}")
+    return result
+
+
+def get_mm_encoder_output_lengths(request: Any) -> Optional[List[int]]:
+    """Return per-item encoder-output lengths for a request.
+
+    New mixed-modality producers attach true embedding-row lengths directly to
+    the Python request. Legacy callers fall back through layout metadata and
+    then ``request.multimodal_lengths``.
+    """
+    prompt_lengths = getattr(request, "multimodal_lengths", None)
+    expected_items = None
+    if prompt_lengths is not None:
+        expected_items = len(
+            _validate_mm_embedding_lengths(prompt_lengths,
+                                           source="request.multimodal_lengths"))
+
+    encoder_lengths = getattr(request, "py_mm_encoder_output_lengths", None)
+    if encoder_lengths is not None:
+        return _validate_mm_embedding_lengths(
+            encoder_lengths,
+            source="request.py_mm_encoder_output_lengths",
+            expected_items=expected_items)
+
+    py_multimodal_data = getattr(request, "py_multimodal_data", None)
+    if isinstance(py_multimodal_data, dict):
+        layout_metadata = py_multimodal_data.get("layout_metadata")
+        if layout_metadata is not None and not isinstance(
+                layout_metadata, dict):
+            raise TypeError(
+                "request.py_multimodal_data['layout_metadata'] must be a dict")
+        if isinstance(layout_metadata, dict):
+            encoder_lengths = layout_metadata.get("encoder_output_lengths")
+            if encoder_lengths is not None:
+                encoder_lengths = _validate_mm_embedding_lengths(
+                    encoder_lengths,
+                    source="layout_metadata['encoder_output_lengths']",
+                    expected_items=expected_items)
+                modalities = layout_metadata.get("modalities")
+                if modalities is not None and len(modalities) != len(
+                        encoder_lengths):
+                    raise ValueError(
+                        "layout_metadata['modalities'] length "
+                        f"({len(modalities)}) does not match encoder-output "
+                        f"length count ({len(encoder_lengths)})")
+                return encoder_lengths
+
+    if prompt_lengths is None:
+        return None
+    return _validate_mm_embedding_lengths(prompt_lengths,
+                                          source="request.multimodal_lengths")
+
+
+def split_mm_embeddings_by_request(
+        mm_embeddings: List[torch.Tensor], requests: List[Any],
+        num_context_requests: int) -> List[torch.Tensor]:
+    """Split encoder outputs into one tensor per scheduled request."""
+    if len(mm_embeddings) != 1:
+        raise ValueError(
+            "mm_encoder_only requires a single concatenated encoder-output "
+            "tensor; multi-tensor outputs are ambiguous because they may be "
+            f"ordered by modality instead of request, got {len(mm_embeddings)} "
+            f"tensors for {len(requests)} requests")
+
+    request_chunks = []
+    missing_lengths = False
+    for request in requests:
+        lengths = get_mm_encoder_output_lengths(request)
+        if lengths is None:
+            missing_lengths = True
+            continue
+        request_chunks.append(sum(lengths))
+
+    if missing_lengths:
+        if request_chunks:
+            raise ValueError(
+                "multimodal encoder-output lengths must be present for all "
+                "requests when splitting a concatenated encoder tensor")
+        return list(torch.chunk(mm_embeddings[0], num_context_requests, dim=0))
+
+    _validate_mm_embedding_lengths(request_chunks,
+                                   source="per-request encoder-output lengths",
+                                   total_length=len(mm_embeddings[0]))
+    return list(torch.split(mm_embeddings[0], request_chunks, dim=0))
+
+
 @dataclass(slots=True)
 class PerfTimingInfo:
     """Stores performance timing information for a request."""
@@ -389,12 +503,12 @@ class PyResult:
         Args:
             mm_embeddings: Concatenated multimodal embeddings tensor of shape
                 [total_tokens, hidden_dim].
-            multimodal_lengths: Current per-item split lengths.
+            multimodal_lengths: Per-item encoder-output split lengths.
         """
-        # TODO(TRTLLM-12175): callers currently pass request.multimodal_lengths,
-        # a prompt-side MM-token count that may include non-embedding
-        # special/framing tokens. This split needs per-item encoder-output
-        # embedding lengths instead.
+        multimodal_lengths = _validate_mm_embedding_lengths(
+            multimodal_lengths,
+            source="multimodal encoder-output lengths",
+            total_length=len(mm_embeddings))
         split_embeddings = torch.split(mm_embeddings, multimodal_lengths, dim=0)
 
         # Create a SharedTensorContainer handle for each split
@@ -634,6 +748,8 @@ class LlmRequest(tensorrt_llm.bindings.internal.batch_manager.LlmRequest):
         self.py_lora_path: str | None = kwargs.pop("py_lora_path", None)
         # Multimodal data
         self.py_multimodal_data = kwargs.pop("py_multimodal_data", None)
+        self.py_mm_encoder_output_lengths = kwargs.pop(
+            "py_mm_encoder_output_lengths", None)
         if llm_request is not None:
             super().__init__(llm_request)
         else:
@@ -946,11 +1062,15 @@ def executor_request_to_llm_request(
     multimodal_positions = None
     multimodal_lengths = None
     multimodal_uuids = None
+    mm_encoder_output_lengths = None
     if executor_request.multimodal_input is not None:
-        multimodal_hashes = executor_request.multimodal_input.multimodal_hashes
-        multimodal_positions = executor_request.multimodal_input.multimodal_positions
-        multimodal_lengths = executor_request.multimodal_input.multimodal_lengths
-        multimodal_uuids = executor_request.multimodal_input.multimodal_uuids
+        multimodal_input = executor_request.multimodal_input
+        multimodal_hashes = multimodal_input.multimodal_hashes
+        multimodal_positions = multimodal_input.multimodal_positions
+        multimodal_lengths = multimodal_input.multimodal_lengths
+        multimodal_uuids = multimodal_input.multimodal_uuids
+        mm_encoder_output_lengths = getattr(
+            multimodal_input, "multimodal_encoder_output_lengths", None)
 
     # Extract mrope fields
     mrope_rotary_cos_sin = None
@@ -1025,6 +1145,7 @@ def executor_request_to_llm_request(
         arrival_time=getattr(executor_request, "py_arrival_time", None),
         py_multimodal_data=getattr(executor_request, "py_multimodal_data",
                                    None),
+        py_mm_encoder_output_lengths=mm_encoder_output_lengths,
         kv_cache_retention_config=executor_request.kv_cache_retention_config,
         logprobs_mode=getattr(executor_request, "py_logprobs_mode",
                               LogprobMode.RAW),

@@ -77,7 +77,12 @@ from ..flashinfer_utils import IS_FLASHINFER_AVAILABLE
 from ..speculative.interface import get_force_num_accepted_tokens
 from ..speculative.spec_tree_manager import SpecTreeManager
 from .finish_reason import FinishedState
-from .llm_request import LlmRequest, LlmRequestState, get_draft_token_length
+from .llm_request import (
+    LlmRequest,
+    LlmRequestState,
+    get_draft_token_length,
+    get_mm_encoder_output_lengths,
+)
 from .resource_manager import ResourceManager, ResourceManagerType
 from .sampling_utils import (
     BEAM_SEARCH_PAD_TOKEN,
@@ -345,21 +350,26 @@ class EarlyStopWithMMResult(Sampler[SampleStateWithMMResult]):
         extra_data = state.data.extra_data or {}
         mrope_position_ids = extra_data.get("mrope_position_ids", None)
         mrope_position_deltas = extra_data.get("mrope_position_deltas", None)
+        if len(mm_embeddings) != len(requests):
+            raise ValueError(
+                f"mm_embeddings count mismatch: {len(mm_embeddings)} != {len(requests)}"
+            )
         for i, (request, mm_embedding) in enumerate(zip(requests, mm_embeddings)):
             request.state = LlmRequestState.GENERATION_COMPLETE
             # NOTE: This is a hack: set finish reason manually and set the beam 0
             request.set_finished_reason(FinishReason.LENGTH, 0)
-            assert request.multimodal_lengths is not None
-            # TODO(TRTLLM-12175): request.multimodal_lengths is a
-            # prompt-side MM-token count and may include non-embedding
-            # special/framing tokens. This validation needs per-item
-            # encoder-output embedding lengths instead.
-            if len(mm_embedding) != sum(request.multimodal_lengths):
+            encoder_output_lengths = get_mm_encoder_output_lengths(request)
+            if encoder_output_lengths is None:
                 raise ValueError(
-                    f"mm_embedding shape mismatch: {len(mm_embedding)} != {sum(request.multimodal_lengths)}"
+                    "multimodal encoder-output lengths are required to "
+                    "package multimodal embedding handles"
+                )
+            if len(mm_embedding) != sum(encoder_output_lengths):
+                raise ValueError(
+                    f"mm_embedding shape mismatch: {len(mm_embedding)} != {sum(encoder_output_lengths)}"
                 )
 
-            request.py_result.append_mm_embeddings(mm_embedding, request.multimodal_lengths)
+            request.py_result.append_mm_embeddings(mm_embedding, encoder_output_lengths)
 
             # Store mrope data if available
             if mrope_position_ids is not None and mrope_position_deltas is not None:

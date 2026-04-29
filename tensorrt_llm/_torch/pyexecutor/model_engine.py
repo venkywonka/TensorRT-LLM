@@ -64,7 +64,8 @@ from .config_utils import is_mla
 from .cuda_graph_runner import CUDAGraphRunner, CUDAGraphRunnerConfig
 from .guided_decoder import CapturableGuidedDecoder
 from .layerwise_nvtx_marker import LayerwiseNvtxMarker
-from .llm_request import LlmRequest, get_draft_token_length
+from .llm_request import (LlmRequest, get_draft_token_length,
+                          split_mm_embeddings_by_request)
 from .mamba_cache_manager import MambaHybridCacheManager
 from .model_loader import ModelLoader, _construct_checkpoint_loader
 from .resource_manager import (BaseResourceManager, KVCacheManager,
@@ -4057,35 +4058,14 @@ class PyTorchModelEngine(ModelEngine):
         if not multimodal_params or len(multimodal_params) == 0:
             # Return empty embeddings if no multimodal data
             return {'mm_embeddings': []}
-        # TODO(TRTLLM-12175): split encoder outputs by explicit per-request
-        # encoder-output embedding lengths. multimodal_lengths is a
-        # prompt-side MM-token count and may include non-embedding
-        # special/framing tokens.
-        if getattr(scheduled_requests.context_requests[0], 'multimodal_lengths',
-                   None) is None:
-            multimodal_chunks = None
-        else:
-            multimodal_chunks = [
-                sum(request.multimodal_lengths)
-                for request in scheduled_requests.context_requests
-                if request.multimodal_lengths is not None
-            ]
         # For mm_encoder_only mode, we only run the vision encoder part
         # The model should be a vision encoder (e.g., Qwen2VisionModelBase)
         mm_embeddings = self.model.forward(multimodal_params)
-        assert len(
-            mm_embeddings
-        ) == 1, "mm_embeddings should be a 1-element list, mix modality (video+image) is not supported"
-
-        if multimodal_chunks is None or len(multimodal_chunks) != len(
-                multimodal_params):
-            mm_embeddings = list(
-                torch.chunk(mm_embeddings[0],
-                            scheduled_requests.num_context_requests,
-                            dim=0))
-        else:
-            mm_embeddings = list(
-                torch.split(mm_embeddings[0], multimodal_chunks, dim=0))
+        mm_embeddings = split_mm_embeddings_by_request(
+            mm_embeddings,
+            scheduled_requests.context_requests,
+            scheduled_requests.num_context_requests,
+        )
 
         # Extract mrope position data from multimodal_params if available
         mrope_position_ids_list = []
