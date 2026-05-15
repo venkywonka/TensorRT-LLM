@@ -1,5 +1,4 @@
 import copy
-import os
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -49,6 +48,8 @@ from .modeling_multimodal_utils import (
     find_input_mm_embeds,
     fuse_input_embeds,
     get_multimodal_embeddings,
+    is_disagg_context_role,
+    make_multimodal_layout_metadata,
 )
 from .modeling_qwen2vl import Qwen2_5_VLVisionAttention
 from .modeling_utils import (
@@ -59,13 +60,6 @@ from .modeling_utils import (
     register_auto_model,
     register_vision_encoder,
 )
-
-_DISAGG_ROLE_ENV_NAME = "TRTLLM_DISAGG_ROLE"
-_DISAGG_CONTEXT_ROLES = {"context", "ctx"}
-
-
-def _is_disagg_context_role() -> bool:
-    return os.getenv(_DISAGG_ROLE_ENV_NAME, "").lower() in _DISAGG_CONTEXT_ROLES
 
 
 def _expand_prompt_token_ids_for_mm_handoff(
@@ -138,14 +132,14 @@ def _expand_prompt_token_ids_for_mm_handoff(
     if write_pos != final_length:
         raise RuntimeError(f"Write position mismatch: {write_pos} != {final_length}")
 
-    layout_metadata = {
-        "multimodal_item_run_cu_offsets": item_run_cu_offsets,
-        "multimodal_run_positions": run_positions,
-        "multimodal_run_lengths": run_lengths,
-        "multimodal_embedding_lengths": multimodal_embedding_lengths,
-        "special_token_offsets": special_token_offsets,
-        "item_types": item_types,
-    }
+    layout_metadata = make_multimodal_layout_metadata(
+        item_run_cu_offsets,
+        run_positions,
+        run_lengths,
+        multimodal_embedding_lengths,
+        special_token_offsets=special_token_offsets,
+        item_types=item_types,
+    )
     return (
         expanded_ids.to(torch.int32).tolist(),
         mm_token_lengths,
@@ -1068,7 +1062,7 @@ class Qwen3VLModelBase(PreTrainedModel):
         # Qwen3ForCausalLM.
         self.llm = AutoModelForCausalLM.from_config(llm_model_config)
 
-        if not _is_disagg() or _is_disagg_context_role():
+        if not _is_disagg() or is_disagg_context_role():
             self.mm_encoder = Qwen3VisionModelBase(
                 model_config, kwargs.get("vision_model_class", None)
             ).eval()
