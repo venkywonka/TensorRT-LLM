@@ -28,8 +28,8 @@
   </noscript>
   
   <!-- Loaded before other Sphinx assets -->
-  <link href="_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
-<link href="_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+  <link href="_static/styles/theme.css?digest=0790524f97105ba85085" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=0790524f97105ba85085" rel="stylesheet" />
 
     <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
@@ -40,10 +40,10 @@
     <link rel="stylesheet" type="text/css" href="_static/custom.css?v=19d20f17" />
   
   <!-- So that users can add custom icons -->
-  <script src="_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <script defer src="_static/scripts/fontawesome.js?digest=0790524f97105ba85085"></script>
   <!-- Pre-loaded scripts that we'll load fully later -->
-  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
-<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=0790524f97105ba85085" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=0790524f97105ba85085" />
 
 
 
@@ -56,16 +56,17 @@
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
-    <script src="_static/togglebutton.js?v=1ae7504c"></script>
+    <script src="_static/togglebutton.js?v=b8b12719"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'index';</script>
     <script>
-        DOCUMENTATION_OPTIONS.theme_version = '0.16.1';
+        DOCUMENTATION_OPTIONS.theme_version = '0.18.0';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = './_static/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.3.0rc9';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.3.0rc15';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
 
     <link rel="icon" href="_static/favicon.png"/>
 
@@ -76,26 +77,32 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.3.0rc9" />
+  <meta name="docsearch:version" content="1.3.0rc15" />
+  
+    
+    <script src="_static/searchtools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <script src="searchindex.js"></script>
+  
 
 
   </head>
 
-  
-  
-  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+  <body data-default-mode="">
+
 
   
   
   <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
-
 
   
   <div id="pst-scroll-pixel-helper"></div>
   
   <button type="button" class="btn rounded-pill" id="pst-back-to-top">
     <i class="fa-solid fa-arrow-up"></i>Back to top</button>
-
+  
+  
+  
   
   <dialog id="pst-search-dialog">
     
@@ -121,7 +128,7 @@
 </div>
 
   
-    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
 <div class="bd-header__inner bd-page-width">
   <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
     <span class="fa-solid fa-bars"></span>
@@ -201,11 +208,18 @@
       
         <div class="navbar-item">
 
-<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
-  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
-  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
-  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
-</button></div>
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
       
     </div>
     
@@ -306,11 +320,18 @@
         
           <div class="navbar-item">
 
-<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
-  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
-  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
-  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
-</button></div>
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
         
       </div>
     
@@ -329,9 +350,9 @@
 <li class="toctree-l1"><a class="reference internal" href="overview.html">Overview</a></li>
 <li class="toctree-l1"><a class="reference internal" href="quick-start-guide.html">Quick Start Guide</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="installation/index.html">Installation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="installation/containers.html">Pre-built release container images on NGC</a></li>
-<li class="toctree-l2"><a class="reference internal" href="installation/linux.html">Installing on Linux via <code class="docutils literal notranslate"><span class="pre">pip</span></code></a></li>
-<li class="toctree-l2"><a class="reference internal" href="installation/build-from-source-linux.html">Building from Source Code on Linux</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation/installation-guide.html">Installation Guide</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation/build-from-source.html">Build from Source</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation/containers.html">Container Images</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="supported-hardware.html">Supported Hardware</a></li>
@@ -352,6 +373,7 @@
 <li class="toctree-l2"><a class="reference internal" href="examples/llm_kv_cache_offloading.html">KV Cache Offloading</a></li>
 <li class="toctree-l2"><a class="reference internal" href="examples/llm_runtime.html">Runtime Configuration Examples</a></li>
 <li class="toctree-l2"><a class="reference internal" href="examples/llm_sampling.html">Sampling Techniques Showcase</a></li>
+<li class="toctree-l2"><a class="reference internal" href="examples/llm_lmcache_connector.html">LMCache KV Cache Connector</a></li>
 <li class="toctree-l2"><a class="reference internal" href="examples/llm_mgmn_llm_distributed.html">Run LLM-API with pytorch backend on Slurm</a></li>
 <li class="toctree-l2"><a class="reference internal" href="examples/llm_mgmn_trtllm_bench.html">Run trtllm-bench with pytorch backend on Slurm</a></li>
 <li class="toctree-l2"><a class="reference internal" href="examples/llm_mgmn_trtllm_serve.html">Run trtllm-serve with pytorch backend on Slurm</a></li>
@@ -394,7 +416,7 @@
 <li class="toctree-l1"><a class="reference internal" href="models/supported-models.html">Supported Models</a></li>
 
 
-<li class="toctree-l1"><a class="reference internal" href="models/visual-generation.html">Visual Generation (Prototype)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="models/visual-generation.html">Visual Generation (Beta)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="models/adding-new-model.html">Adding a New Model</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">CLI Reference</span></p>
@@ -446,31 +468,40 @@
 <li class="toctree-l1"><a class="reference internal" href="developer-guide/dev-containers.html">Using Dev Containers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="developer-guide/api-change.html">LLM API Change Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="developer-guide/kv-transfer.html">Introduction to KV Cache Transmission</a></li>
+<li class="toctree-l1"><a class="reference internal" href="developer-guide/telemetry.html">Telemetry</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html">ADP Balance Strategy</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html">Running GPT-OSS-120B with Eagle3 Speculative Decoding on GB200/B200 (TensorRT LLM)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html">Combining Guided Decoding and Speculative Decoding: Making CPU and GPU Cooperate Seamlessly</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html">Inference Time Compute Implementation in TensorRT LLM</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html">Scaling Expert Parallelism in TensorRT LLM (Part 3: Pushing the Performance Boundary)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog15_Optimizing_DeepSeek_V32_on_NVIDIA_Blackwell_GPUs.html">Optimizing DeepSeek-V3.2 on NVIDIA Blackwell GPUs</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html">Accelerating Long-Context Inference with Skip Softmax Attention</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html">Sparse Attention in TensorRT LLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html">MoE as Dense GEMM: Optimizing Low-Latency MoE Inference on NVIDIA Blackwell</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog23_Joint_Optimization_of_Agent_Applications_and_TensorRT-LLM.html">Joint Optimization of Agent Applications and TensorRT-LLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html">Helix Parallelism in TensorRT-LLM: Scaling Multi-Million-Token Decoding with KV Cache Sharding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html">Temporal Correlation Meets Sparse Attention: Guess-Verify-Refine Top-K for Blackwell</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog20_Tuning_CUDA_Graph_Batch_Sizes_for_Higher_Output_Throughput.html">Tuning CUDA Graph Batch Sizes for Higher Output Throughput</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html">DWDP: Distributed Weight Data Parallelism for High-Performance LLM Inference on NVL72</a></li>
 <li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html">Optimizing MoE Communication with One-Sided AlltoAll Over NVLink</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog1_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html">Pushing Latency Boundaries: Optimizing DeepSeek-R1 Performance on NVIDIA B200 GPUs</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog2_DeepSeek_R1_MTP_Implementation_and_Optimization.html">DeepSeek R1 MTP Implementation and Optimization</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html">Optimizing DeepSeek R1 Throughput on NVIDIA Blackwell GPUs: A Deep Dive for Developers</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html">Scaling Expert Parallelism in TensorRT LLM (Part 1: Design and Implementation of Large-scale EP)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog5_Disaggregated_Serving_in_TensorRT-LLM.html">Disaggregated Serving in TensorRT LLM</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog6_Llama4_maverick_eagle_guide.html">How to launch Llama4 Maverick + Eagle3 TensorRT LLM server</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog7_NGram_performance_Analysis_And_Auto_Enablement.html">N-Gram Speculative Decoding in TensorRT LLM</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog8_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html">Scaling Expert Parallelism in TensorRT LLM (Part 2: Performance Status and Optimization)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog9_Deploying_GPT_OSS_on_TRTLLM.html">Running a High Performance GPT-OSS-120B Inference Server with TensorRT LLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html">Sparse Attention in TensorRT LLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html">Accelerating Long-Context Inference with Skip Softmax Attention</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog15_Optimizing_DeepSeek_V32_on_NVIDIA_Blackwell_GPUs.html">Optimizing DeepSeek-V3.2 on NVIDIA Blackwell GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html">Scaling Expert Parallelism in TensorRT LLM (Part 3: Pushing the Performance Boundary)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html">Inference Time Compute Implementation in TensorRT LLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html">Combining Guided Decoding and Speculative Decoding: Making CPU and GPU Cooperate Seamlessly</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html">Running GPT-OSS-120B with Eagle3 Speculative Decoding on GB200/B200 (TensorRT LLM)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html">ADP Balance Strategy</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog09_Deploying_GPT_OSS_on_TRTLLM.html">Running a High Performance GPT-OSS-120B Inference Server with TensorRT LLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog08_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html">Scaling Expert Parallelism in TensorRT LLM (Part 2: Performance Status and Optimization)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog07_NGram_performance_Analysis_And_Auto_Enablement.html">N-Gram Speculative Decoding in TensorRT LLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog06_Llama4_maverick_eagle_guide.html">How to launch Llama4 Maverick + Eagle3 TensorRT LLM server</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog05_Disaggregated_Serving_in_TensorRT-LLM.html">Disaggregated Serving in TensorRT LLM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html">Scaling Expert Parallelism in TensorRT LLM (Part 1: Design and Implementation of Large-scale EP)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html">Optimizing DeepSeek R1 Throughput on NVIDIA Blackwell GPUs: A Deep Dive for Developers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog02_DeepSeek_R1_MTP_Implementation_and_Optimization.html">DeepSeek R1 MTP Implementation and Optimization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog01_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html">Pushing Latency Boundaries: Optimizing DeepSeek-R1 Performance on NVIDIA B200 GPUs</a></li>
 <li class="toctree-l1"><a class="reference internal" href="blogs/Best_perf_practice_on_DeepSeek-R1_in_TensorRT-LLM.html">How to get best performance on DeepSeek-R1 in TensorRT LLM</a></li>
 <li class="toctree-l1"><a class="reference internal" href="blogs/H200launch.html">H200 achieves nearly 12,000 tokens/sec on Llama2-13B with TensorRT LLM</a></li>
 <li class="toctree-l1"><a class="reference internal" href="blogs/XQA-kernel.html">New XQA-kernel provides 2.4x more Llama-70B throughput within the same latency budget</a></li>
 <li class="toctree-l1"><a class="reference internal" href="blogs/H100vsA100.html">H100 has 4.6x A100 Performance in TensorRT LLM, achieving 10,000 tok/s at 100ms to first token</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/Falcon180B-H200.html">Falcon-180B on a single H200 GPU with INT4 AWQ, and 6.7x faster Llama-70B over A100</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/quantization-in-TRT-LLM.html">Speed up inference with SOTA quantization techniques in TRT-LLM</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Quick Links</span></p>
 <ul class="nav bd-sidenav">
@@ -520,7 +551,7 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="quick-start-guide.html">Quick Start Guide</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="quick-start-guide.html#launch-docker-container">Launch Docker Container</a></li>
+<li class="toctree-l2"><a class="reference internal" href="quick-start-guide.html#install-tensorrt-llm">Install TensorRT LLM</a></li>
 <li class="toctree-l2"><a class="reference internal" href="quick-start-guide.html#deploy-online-serving-with-trtllm-serve">Deploy Online Serving with trtllm-serve</a></li>
 <li class="toctree-l2"><a class="reference internal" href="quick-start-guide.html#run-offline-inference-with-llm-api">Run Offline Inference with LLM API</a></li>
 <li class="toctree-l2"><a class="reference internal" href="quick-start-guide.html#run-offline-inference-with-visualgen-api">Run Offline Inference with VisualGen API</a></li>
@@ -579,8 +610,12 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="models/supported-models.html#multimodal-feature-support-matrix-pytorch-backend">Multimodal Feature Support Matrix (PyTorch Backend)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="models/supported-models.html#visual-generation-models">Visual Generation Models</a></li>
-<li class="toctree-l1"><a class="reference internal" href="models/visual-generation.html">Visual Generation (Prototype)</a><ul>
+<li class="toctree-l1"><a class="reference internal" href="models/supported-models.html#visual-generation-models">Visual Generation Models</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="models/supported-models.html#id34">Supported Models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="models/supported-models.html#feature-matrix">Feature Matrix</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="models/visual-generation.html">Visual Generation (Beta)</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="models/visual-generation.html#background">Background</a></li>
 <li class="toctree-l2"><a class="reference internal" href="models/visual-generation.html#supported-models">Supported Models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="models/visual-generation.html#quick-start">Quick Start</a></li>
@@ -627,7 +662,62 @@
 <li class="toctree-l2"><a class="reference internal" href="llm-api/index.html#tips-and-troubleshooting">Tips and Troubleshooting</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="llm-api/reference.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="llm-api/reference.html">API Reference</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.LLM"><code class="docutils literal notranslate"><span class="pre">LLM</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.AsyncLLM"><code class="docutils literal notranslate"><span class="pre">AsyncLLM</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.MultimodalEncoder"><code class="docutils literal notranslate"><span class="pre">MultimodalEncoder</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.CompletionOutput"><code class="docutils literal notranslate"><span class="pre">CompletionOutput</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.RequestOutput"><code class="docutils literal notranslate"><span class="pre">RequestOutput</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.GuidedDecodingParams"><code class="docutils literal notranslate"><span class="pre">GuidedDecodingParams</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.SamplingParams"><code class="docutils literal notranslate"><span class="pre">SamplingParams</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.DisaggregatedParams"><code class="docutils literal notranslate"><span class="pre">DisaggregatedParams</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.DisaggScheduleStyle"><code class="docutils literal notranslate"><span class="pre">DisaggScheduleStyle</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.KvCacheConfig"><code class="docutils literal notranslate"><span class="pre">KvCacheConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.KvCacheRetentionConfig"><code class="docutils literal notranslate"><span class="pre">KvCacheRetentionConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.CudaGraphConfig"><code class="docutils literal notranslate"><span class="pre">CudaGraphConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.MoeConfig"><code class="docutils literal notranslate"><span class="pre">MoeConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.LookaheadDecodingConfig"><code class="docutils literal notranslate"><span class="pre">LookaheadDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.MedusaDecodingConfig"><code class="docutils literal notranslate"><span class="pre">MedusaDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.EagleDecodingConfig"><code class="docutils literal notranslate"><span class="pre">EagleDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.Eagle3DecodingConfig"><code class="docutils literal notranslate"><span class="pre">Eagle3DecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.MTPDecodingConfig"><code class="docutils literal notranslate"><span class="pre">MTPDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.SchedulerConfig"><code class="docutils literal notranslate"><span class="pre">SchedulerConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.CapacitySchedulerPolicy"><code class="docutils literal notranslate"><span class="pre">CapacitySchedulerPolicy</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.BuildConfig"><code class="docutils literal notranslate"><span class="pre">BuildConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.QuantConfig"><code class="docutils literal notranslate"><span class="pre">QuantConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.QuantAlgo"><code class="docutils literal notranslate"><span class="pre">QuantAlgo</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.CalibConfig"><code class="docutils literal notranslate"><span class="pre">CalibConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.BuildCacheConfig"><code class="docutils literal notranslate"><span class="pre">BuildCacheConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.RequestError"><code class="docutils literal notranslate"><span class="pre">RequestError</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.MpiCommSession"><code class="docutils literal notranslate"><span class="pre">MpiCommSession</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.ExtendedRuntimePerfKnobConfig"><code class="docutils literal notranslate"><span class="pre">ExtendedRuntimePerfKnobConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.BatchingType"><code class="docutils literal notranslate"><span class="pre">BatchingType</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.ContextChunkingPolicy"><code class="docutils literal notranslate"><span class="pre">ContextChunkingPolicy</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.DynamicBatchConfig"><code class="docutils literal notranslate"><span class="pre">DynamicBatchConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.CacheTransceiverConfig"><code class="docutils literal notranslate"><span class="pre">CacheTransceiverConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.NGramDecodingConfig"><code class="docutils literal notranslate"><span class="pre">NGramDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.PARDDecodingConfig"><code class="docutils literal notranslate"><span class="pre">PARDDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.DFlashDecodingConfig"><code class="docutils literal notranslate"><span class="pre">DFlashDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.SADecodingConfig"><code class="docutils literal notranslate"><span class="pre">SADecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.SAEnhancerConfig"><code class="docutils literal notranslate"><span class="pre">SAEnhancerConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.UserProvidedDecodingConfig"><code class="docutils literal notranslate"><span class="pre">UserProvidedDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.TorchCompileConfig"><code class="docutils literal notranslate"><span class="pre">TorchCompileConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.DraftTargetDecodingConfig"><code class="docutils literal notranslate"><span class="pre">DraftTargetDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.LlmArgs"><code class="docutils literal notranslate"><span class="pre">LlmArgs</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.TorchLlmArgs"><code class="docutils literal notranslate"><span class="pre">TorchLlmArgs</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.TrtLlmArgs"><code class="docutils literal notranslate"><span class="pre">TrtLlmArgs</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.AutoDecodingConfig"><code class="docutils literal notranslate"><span class="pre">AutoDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.AttentionDpConfig"><code class="docutils literal notranslate"><span class="pre">AttentionDpConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.LoRARequest"><code class="docutils literal notranslate"><span class="pre">LoRARequest</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.SaveHiddenStatesDecodingConfig"><code class="docutils literal notranslate"><span class="pre">SaveHiddenStatesDecodingConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.RocketSparseAttentionConfig"><code class="docutils literal notranslate"><span class="pre">RocketSparseAttentionConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.ReorderRequestPolicyConfig"><code class="docutils literal notranslate"><span class="pre">ReorderRequestPolicyConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.DeepSeekSparseAttentionConfig"><code class="docutils literal notranslate"><span class="pre">DeepSeekSparseAttentionConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.SchedulingParams"><code class="docutils literal notranslate"><span class="pre">SchedulingParams</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.SkipSoftmaxAttentionConfig"><code class="docutils literal notranslate"><span class="pre">SkipSoftmaxAttentionConfig</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="llm-api/reference.html#tensorrt_llm.llmapi.PrometheusMetricsConfig"><code class="docutils literal notranslate"><span class="pre">PrometheusMetricsConfig</span></code></a></li>
+</ul>
+</li>
 </ul>
 </div>
 <div class="toctree-wrapper compound">
@@ -791,6 +881,7 @@
 <li class="toctree-l1"><a class="reference internal" href="developer-guide/overview.html">Architecture Overview</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="developer-guide/overview.html#runtime-optimizations">Runtime Optimizations</a></li>
 <li class="toctree-l2"><a class="reference internal" href="developer-guide/overview.html#visual-generation">Visual Generation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="developer-guide/overview.html#module-level-logging">Module-Level Logging</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="developer-guide/perf-analysis.html">Performance Analysis</a><ul>
@@ -843,57 +934,112 @@
 <li class="toctree-l2"><a class="reference internal" href="developer-guide/kv-transfer.html#evolution-outlook">Evolution Outlook</a></li>
 </ul>
 </li>
+<li class="toctree-l1"><a class="reference internal" href="developer-guide/telemetry.html">Telemetry</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="developer-guide/telemetry.html#llm-api-configuration-fields">LLM API Configuration Fields</a></li>
+</ul>
+</li>
 </ul>
 </div>
 <div class="toctree-wrapper compound">
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Blogs</span></p>
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html">ADP Balance Strategy</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#motivation-and-background">Motivation and Background</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#theoretical-analysis-and-modeling">Theoretical Analysis and Modeling</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#experiments">Experiments</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#conclusion">Conclusion</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#acknowledgement">Acknowledgement</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html">MoE as Dense GEMM: Optimizing Low-Latency MoE Inference on NVIDIA Blackwell</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#abstract">Abstract</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#background-moe-inference-latency-regimes">Background: MoE Inference Latency Regimes</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#scope-and-takeaways">Scope and Takeaways</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#densegemm-design">DENSEGEMM Design</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#advantages-over-the-grouped-gemm-flow">Advantages over the Grouped-GEMM Flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#roofline-analysis">Roofline Analysis</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#kernel-implementation-cute-dsl-on-blackwell">Kernel Implementation (CuTe DSL on Blackwell)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#performance-evaluation">Performance Evaluation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#current-limitations-and-future-work">Current Limitations and Future Work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog24_MoE_as_Dense_GEMM.html#references">References</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html">Running GPT-OSS-120B with Eagle3 Speculative Decoding on GB200/B200 (TensorRT LLM)</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#prerequisites">Prerequisites</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#get-the-tensorrt-llm-container-1-1-0rc0">Get the TensorRT LLM Container (1.1.0rc0)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#start-the-tensorrt-llm-container">Start the TensorRT LLM Container</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#download-the-models-base-eagle3">Download the models (Base + Eagle3)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#create-the-eagle3-configuration">Create the Eagle3 Configuration</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#launch-the-server-eagle3-speculative-decoding">Launch the Server (Eagle3 Speculative Decoding)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#quick-health-check">Quick Health Check</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#sample-chat-completions-request">Sample Chat Completions Request</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog23_Joint_Optimization_of_Agent_Applications_and_TensorRT-LLM.html">Joint Optimization of Agent Applications and TensorRT-LLM</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog23_Joint_Optimization_of_Agent_Applications_and_TensorRT-LLM.html#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog23_Joint_Optimization_of_Agent_Applications_and_TensorRT-LLM.html#building-multi-agent-systems-with-scaffolding">Building Multi-Agent Systems with Scaffolding</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog23_Joint_Optimization_of_Agent_Applications_and_TensorRT-LLM.html#capturing-agent-application-information">Capturing Agent Application Information</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog23_Joint_Optimization_of_Agent_Applications_and_TensorRT-LLM.html#case-study-1-proactive-kv-cache-drop">Case Study 1: Proactive KV Cache Drop</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog23_Joint_Optimization_of_Agent_Applications_and_TensorRT-LLM.html#case-study-2-batch-scheduling">Case Study 2: Batch Scheduling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog23_Joint_Optimization_of_Agent_Applications_and_TensorRT-LLM.html#evaluation">Evaluation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog23_Joint_Optimization_of_Agent_Applications_and_TensorRT-LLM.html#future-work">Future Work</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html">Combining Guided Decoding and Speculative Decoding: Making CPU and GPU Cooperate Seamlessly</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#background-and-challenges">Background and Challenges</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#trace-grammar-state-for-draft-token-proposal-and-rejection">Trace Grammar State for Draft Token Proposal and Rejection</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#make-grammar-computation-capturable-by-cuda-graph">Make Grammar Computation Capturable by CUDA Graph</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#performance-and-analysis">Performance and Analysis</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#acknowledgements">Acknowledgements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html">Helix Parallelism in TensorRT-LLM: Scaling Multi-Million-Token Decoding with KV Cache Sharding</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html#introduction">Introduction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html#decoding-bottlenecks-at-scale">Decoding Bottlenecks at Scale</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html#how-helix-works">How Helix Works</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html#implementation-in-tensorrt-llm">Implementation in TensorRT-LLM</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html#when-to-use-helix">When to Use Helix</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html#performance-results-deepseek-r1-moe-mla">Performance Results: DeepSeek-R1 (MoE, MLA)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html#future-work">Future Work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog22_Helix_Parallelism_Scaling_Multi_Million_Token_Decoding_with_KV_Cache_Sharding.html#acknowledgment">Acknowledgment</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html">Inference Time Compute Implementation in TensorRT LLM</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#background-and-motivation">Background and Motivation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#introduction-for-scaffolding-a-framework-for-inference-time-compute">Introduction for Scaffolding: A Framework for inference-time compute</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#an-example-implement-dynasor-cot-on-scaffolding">An Example: Implement Dynasor-CoT on Scaffolding</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#feature-list-on-scaffolding">Feature List on Scaffolding</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#future-work">Future Work</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html">Temporal Correlation Meets Sparse Attention: Guess-Verify-Refine Top-K for Blackwell</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html#introduction">Introduction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html#why-decode-time-top-k-matters-in-dsa">Why Decode-Time Top-K Matters in DSA</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html#why-temporal-correlation-exists">Why Temporal Correlation Exists</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html#how-gvr-works">How GVR Works</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html#tensorrt-llm-integration">TensorRT-LLM Integration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html#results">Results</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html#further-reading-and-reproduction">Further Reading and Reproduction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog21_Temporal_Correlation_Meets_Sparse_Attention.html#conclusion">Conclusion</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html">Scaling Expert Parallelism in TensorRT LLM (Part 3: Pushing the Performance Boundary)</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#overview">Overview</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#lower-precision">Lower precision</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#rethink-network-structure">Rethink network structure</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#more-kernel-overlap-fusion-and-optimization">More kernel overlap, fusion and optimization</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#end-to-end-performance">End-to-End Performance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#acknowledgements">Acknowledgements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog20_Tuning_CUDA_Graph_Batch_Sizes_for_Higher_Output_Throughput.html">Tuning CUDA Graph Batch Sizes for Higher Output Throughput</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog20_Tuning_CUDA_Graph_Batch_Sizes_for_Higher_Output_Throughput.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog20_Tuning_CUDA_Graph_Batch_Sizes_for_Higher_Output_Throughput.html#background-cuda-graph-padding">Background: CUDA Graph Padding</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog20_Tuning_CUDA_Graph_Batch_Sizes_for_Higher_Output_Throughput.html#configurations-under-study">Configurations Under Study</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog20_Tuning_CUDA_Graph_Batch_Sizes_for_Higher_Output_Throughput.html#experiment-setup">Experiment Setup</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog20_Tuning_CUDA_Graph_Batch_Sizes_for_Higher_Output_Throughput.html#phase-1-the-64-configuration">Phase 1: The +64 Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog20_Tuning_CUDA_Graph_Batch_Sizes_for_Higher_Output_Throughput.html#phase-2-the-8-configuration">Phase 2: The +8 Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog20_Tuning_CUDA_Graph_Batch_Sizes_for_Higher_Output_Throughput.html#conclusions">Conclusions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog20_Tuning_CUDA_Graph_Batch_Sizes_for_Higher_Output_Throughput.html#future-work">Future Work</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html">DWDP: Distributed Weight Data Parallelism for High-Performance LLM Inference on NVL72</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html#motivation">Motivation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html#dwdp-overview">DWDP Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html#dwdp-implementation">DWDP Implementation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html#key-optimizations">Key Optimizations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html#evaluation">Evaluation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html#summary">Summary</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html#future-work">Future Work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog19_DWDP_Distributed_Weight_Data_Parallelism_for_High_Performance_LLM_Inference_on_NVL72.html#acknowledgment">Acknowledgment</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html">Optimizing MoE Communication with One-Sided AlltoAll Over NVLink</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#background">Background</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#design-overview">Design Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#implementation-details">Implementation Details</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#performance-benchmark">Performance Benchmark</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#conclusion">Conclusion</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html">Sparse Attention in TensorRT LLM</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#introduction-and-motivation">Introduction and Motivation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#overview-of-sparse-attention-in-tensorrt-llm">Overview of Sparse Attention in TensorRT LLM</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#sparse-attention-framework-design">Sparse Attention Framework Design</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#algorithm-implementations">Algorithm Implementations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#evaluation">Evaluation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#summary-and-future-work">Summary and Future Work</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html">Accelerating Long-Context Inference with Skip Softmax Attention</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#method-overview">Method Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#example-usage">Example Usage</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#accuracy-evaluation">Accuracy Evaluation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#performance-benchmark">Performance Benchmark</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#reproduction">Reproduction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#conclusion">Conclusion</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog15_Optimizing_DeepSeek_V32_on_NVIDIA_Blackwell_GPUs.html">Optimizing DeepSeek-V3.2 on NVIDIA Blackwell GPUs</a><ul>
@@ -909,122 +1055,142 @@
 <li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog15_Optimizing_DeepSeek_V32_on_NVIDIA_Blackwell_GPUs.html#acknowledgement">Acknowledgement</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html">Accelerating Long-Context Inference with Skip Softmax Attention</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#method-overview">Method Overview</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#example-usage">Example Usage</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#accuracy-evaluation">Accuracy Evaluation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#performance-benchmark">Performance Benchmark</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#reproduction">Reproduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog16_Accelerating_Long_Context_Inference_with_Skip_Softmax_Attention.html#conclusion">Conclusion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html">Scaling Expert Parallelism in TensorRT LLM (Part 3: Pushing the Performance Boundary)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#overview">Overview</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#lower-precision">Lower precision</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#rethink-network-structure">Rethink network structure</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#more-kernel-overlap-fusion-and-optimization">More kernel overlap, fusion and optimization</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#end-to-end-performance">End-to-End Performance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog14_Scaling_Expert_Parallelism_in_TensorRT-LLM_part3.html#acknowledgements">Acknowledgements</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html">Sparse Attention in TensorRT LLM</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#introduction-and-motivation">Introduction and Motivation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#overview-of-sparse-attention-in-tensorrt-llm">Overview of Sparse Attention in TensorRT LLM</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#sparse-attention-framework-design">Sparse Attention Framework Design</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#algorithm-implementations">Algorithm Implementations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#evaluation">Evaluation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog17_Sparse_Attention_in_TensorRT-LLM.html#summary-and-future-work">Summary and Future Work</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html">Inference Time Compute Implementation in TensorRT LLM</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#background-and-motivation">Background and Motivation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#introduction-for-scaffolding-a-framework-for-inference-time-compute">Introduction for Scaffolding: A Framework for inference-time compute</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#an-example-implement-dynasor-cot-on-scaffolding">An Example: Implement Dynasor-CoT on Scaffolding</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#feature-list-on-scaffolding">Feature List on Scaffolding</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog13_Inference_Time_Compute_Implementation_in_TensorRT-LLM.html#future-work">Future Work</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html">Optimizing MoE Communication with One-Sided AlltoAll Over NVLink</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#background">Background</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#design-overview">Design Overview</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#implementation-details">Implementation Details</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#performance-benchmark">Performance Benchmark</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog18_Optimizing_MoE_Communication_with_One_Sided_AlltoAll_Over_NVLink.html#future-work-and-conclusion">Future Work And Conclusion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html">Combining Guided Decoding and Speculative Decoding: Making CPU and GPU Cooperate Seamlessly</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#background-and-challenges">Background and Challenges</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#trace-grammar-state-for-draft-token-proposal-and-rejection">Trace Grammar State for Draft Token Proposal and Rejection</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#make-grammar-computation-capturable-by-cuda-graph">Make Grammar Computation Capturable by CUDA Graph</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#performance-and-analysis">Performance and Analysis</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog12_Combining_Guided_Decoding_and_Speculative_Decoding.html#acknowledgements">Acknowledgements</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog1_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html">Pushing Latency Boundaries: Optimizing DeepSeek-R1 Performance on NVIDIA B200 GPUs</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog1_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog1_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#background">Background</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog1_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#implementation-configuration">Implementation Configuration</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog1_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#key-optimizations">Key Optimizations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog1_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#how-to-reproduce">How to reproduce</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog1_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#future-works">Future Works</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog1_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#acknowledgment">Acknowledgment</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html">Running GPT-OSS-120B with Eagle3 Speculative Decoding on GB200/B200 (TensorRT LLM)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#prerequisites">Prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#get-the-tensorrt-llm-container">Get the TensorRT LLM Container</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#start-the-tensorrt-llm-container">Start the TensorRT LLM Container</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#download-the-models-base-eagle3">Download the models (Base + Eagle3)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#create-the-eagle3-configuration">Create the Eagle3 Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#launch-the-server-eagle3-speculative-decoding">Launch the Server (Eagle3 Speculative Decoding)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#quick-health-check">Quick Health Check</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog11_GPT_OSS_Eagle3.html#sample-chat-completions-request">Sample Chat Completions Request</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog2_DeepSeek_R1_MTP_Implementation_and_Optimization.html">DeepSeek R1 MTP Implementation and Optimization</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog2_DeepSeek_R1_MTP_Implementation_and_Optimization.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog2_DeepSeek_R1_MTP_Implementation_and_Optimization.html#mtp-for-inference">MTP for inference</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog2_DeepSeek_R1_MTP_Implementation_and_Optimization.html#mtp-implementation-in-tensorrt-llm">MTP implementation in TensorRT LLM</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog2_DeepSeek_R1_MTP_Implementation_and_Optimization.html#mtp-optimization-relaxed-acceptance">MTP optimization - Relaxed Acceptance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog2_DeepSeek_R1_MTP_Implementation_and_Optimization.html#evaluation">Evaluation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog2_DeepSeek_R1_MTP_Implementation_and_Optimization.html#future-works">Future Works</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog2_DeepSeek_R1_MTP_Implementation_and_Optimization.html#acknowledgment">Acknowledgment</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html">ADP Balance Strategy</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#motivation-and-background">Motivation and Background</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#theoretical-analysis-and-modeling">Theoretical Analysis and Modeling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#experiments">Experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#conclusion">Conclusion</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog10_ADP_Balance_Strategy.html#acknowledgement">Acknowledgement</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html">Optimizing DeepSeek R1 Throughput on NVIDIA Blackwell GPUs: A Deep Dive for Developers</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#introduction">Introduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#precision-strategy">Precision strategy</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#parallel-strategy">Parallel strategy</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#mla-layers-optimizations">MLA Layers Optimizations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#moe-layers-optimizations">MoE Layers Optimizations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#runtime-optimizations">Runtime Optimizations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#how-to-reproduce">How to reproduce</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#future-works">Future Works</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog3_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#acknowledgment">Acknowledgment</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog09_Deploying_GPT_OSS_on_TRTLLM.html">Running a High Performance GPT-OSS-120B Inference Server with TensorRT LLM</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog09_Deploying_GPT_OSS_on_TRTLLM.html#prerequisites">Prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog09_Deploying_GPT_OSS_on_TRTLLM.html#launching-the-tensorrt-llm-docker-container">Launching the TensorRT LLM docker container</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog09_Deploying_GPT_OSS_on_TRTLLM.html#running-the-tensorrt-llm-server">Running the TensorRT LLM Server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog09_Deploying_GPT_OSS_on_TRTLLM.html#launch-the-tensorrt-llm-server">Launch the TensorRT-LLM Server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog09_Deploying_GPT_OSS_on_TRTLLM.html#h200-only-using-openai-triton-kernels-for-moe">(H200 Only) Using OpenAI Triton Kernels for MoE</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog09_Deploying_GPT_OSS_on_TRTLLM.html#test-the-server-with-a-sample-request">Test the Server with a Sample Request</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog09_Deploying_GPT_OSS_on_TRTLLM.html#h200-h100-only-using-openai-triton-kernels-for-moe">(H200/H100 Only) Using OpenAI Triton Kernels for MoE</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog09_Deploying_GPT_OSS_on_TRTLLM.html#troubleshooting-tips">Troubleshooting Tips</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html">Scaling Expert Parallelism in TensorRT LLM (Part 1: Design and Implementation of Large-scale EP)</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#motivation-for-large-scale-ep">Motivation for large-scale EP</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#high-level-design-introduction">High-level design introduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#ep-communication-kernels">EP communication kernels</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#ep-load-balancer">EP Load Balancer</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#e2e-evaluation">E2E evaluation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#reproducing-steps">Reproducing steps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#expanded-thoughts">Expanded thoughts</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog4_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#acknowledgement">Acknowledgement</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog08_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html">Scaling Expert Parallelism in TensorRT LLM (Part 2: Performance Status and Optimization)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog08_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog08_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html#optimization-highlights">Optimization Highlights</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog08_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html#end-to-end-performance">End-to-End Performance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog08_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html#future-work">Future Work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog08_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html#acknowledgements">Acknowledgements</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog5_Disaggregated_Serving_in_TensorRT-LLM.html">Disaggregated Serving in TensorRT LLM</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog5_Disaggregated_Serving_in_TensorRT-LLM.html#motivation">Motivation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog5_Disaggregated_Serving_in_TensorRT-LLM.html#id1">Disaggregated Serving in TensorRT LLM</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog5_Disaggregated_Serving_in_TensorRT-LLM.html#kv-cache-exchange">KV Cache Exchange</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog5_Disaggregated_Serving_in_TensorRT-LLM.html#performance-studies">Performance Studies</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog5_Disaggregated_Serving_in_TensorRT-LLM.html#future-work">Future Work</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog5_Disaggregated_Serving_in_TensorRT-LLM.html#acknowledgement">Acknowledgement</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog07_NGram_performance_Analysis_And_Auto_Enablement.html">N-Gram Speculative Decoding in TensorRT LLM</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog07_NGram_performance_Analysis_And_Auto_Enablement.html#highlights">Highlights</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog07_NGram_performance_Analysis_And_Auto_Enablement.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog07_NGram_performance_Analysis_And_Auto_Enablement.html#background-motivation">Background &amp; Motivation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog07_NGram_performance_Analysis_And_Auto_Enablement.html#algorithm-complexity">Algorithm &amp; Complexity</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog07_NGram_performance_Analysis_And_Auto_Enablement.html#performance-study">Performance Study</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog07_NGram_performance_Analysis_And_Auto_Enablement.html#autoenablement-with-heuristic">Auto‑Enablement with Heuristic</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog6_Llama4_maverick_eagle_guide.html">How to launch Llama4 Maverick + Eagle3 TensorRT LLM server</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog6_Llama4_maverick_eagle_guide.html#prerequisites">Prerequisites</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog6_Llama4_maverick_eagle_guide.html#download-artifacts">Download Artifacts</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog6_Llama4_maverick_eagle_guide.html#launching-the-server">Launching the server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog6_Llama4_maverick_eagle_guide.html#troubleshooting-tips">Troubleshooting Tips</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog6_Llama4_maverick_eagle_guide.html#performance-tuning">Performance Tuning</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog06_Llama4_maverick_eagle_guide.html">How to launch Llama4 Maverick + Eagle3 TensorRT LLM server</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog06_Llama4_maverick_eagle_guide.html#prerequisites">Prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog06_Llama4_maverick_eagle_guide.html#download-artifacts">Download Artifacts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog06_Llama4_maverick_eagle_guide.html#launching-the-server">Launching the server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog06_Llama4_maverick_eagle_guide.html#troubleshooting-tips">Troubleshooting Tips</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog06_Llama4_maverick_eagle_guide.html#performance-tuning">Performance Tuning</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog7_NGram_performance_Analysis_And_Auto_Enablement.html">N-Gram Speculative Decoding in TensorRT LLM</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog7_NGram_performance_Analysis_And_Auto_Enablement.html#highlights">Highlights</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog7_NGram_performance_Analysis_And_Auto_Enablement.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog7_NGram_performance_Analysis_And_Auto_Enablement.html#background-motivation">Background &amp; Motivation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog7_NGram_performance_Analysis_And_Auto_Enablement.html#algorithm-complexity">Algorithm &amp; Complexity</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog7_NGram_performance_Analysis_And_Auto_Enablement.html#performance-study">Performance Study</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog7_NGram_performance_Analysis_And_Auto_Enablement.html#autoenablement-with-heuristic">Auto‑Enablement with Heuristic</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog05_Disaggregated_Serving_in_TensorRT-LLM.html">Disaggregated Serving in TensorRT LLM</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog05_Disaggregated_Serving_in_TensorRT-LLM.html#motivation">Motivation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog05_Disaggregated_Serving_in_TensorRT-LLM.html#id1">Disaggregated Serving in TensorRT LLM</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog05_Disaggregated_Serving_in_TensorRT-LLM.html#kv-cache-exchange">KV Cache Exchange</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog05_Disaggregated_Serving_in_TensorRT-LLM.html#performance-studies">Performance Studies</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog05_Disaggregated_Serving_in_TensorRT-LLM.html#future-work">Future Work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog05_Disaggregated_Serving_in_TensorRT-LLM.html#acknowledgement">Acknowledgement</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog8_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html">Scaling Expert Parallelism in TensorRT LLM (Part 2: Performance Status and Optimization)</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog8_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html#table-of-contents">Table of Contents</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog8_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html#optimization-highlights">Optimization Highlights</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog8_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html#end-to-end-performance">End-to-End Performance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog8_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html#future-work">Future Work</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog8_Scaling_Expert_Parallelism_in_TensorRT-LLM_part2.html#acknowledgements">Acknowledgements</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html">Scaling Expert Parallelism in TensorRT LLM (Part 1: Design and Implementation of Large-scale EP)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#motivation-for-large-scale-ep">Motivation for large-scale EP</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#high-level-design-introduction">High-level design introduction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#ep-communication-kernels">EP communication kernels</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#ep-load-balancer">EP Load Balancer</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#e2e-evaluation">E2E evaluation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#reproducing-steps">Reproducing steps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#expanded-thoughts">Expanded thoughts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog04_Scaling_Expert_Parallelism_in_TensorRT-LLM.html#acknowledgement">Acknowledgement</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog9_Deploying_GPT_OSS_on_TRTLLM.html">Running a High Performance GPT-OSS-120B Inference Server with TensorRT LLM</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog9_Deploying_GPT_OSS_on_TRTLLM.html#prerequisites">Prerequisites</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog9_Deploying_GPT_OSS_on_TRTLLM.html#launching-the-tensorrt-llm-docker-container">Launching the TensorRT LLM docker container</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog9_Deploying_GPT_OSS_on_TRTLLM.html#running-the-tensorrt-llm-server">Running the TensorRT LLM Server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog9_Deploying_GPT_OSS_on_TRTLLM.html#launch-the-tensorrt-llm-server">Launch the TensorRT-LLM Server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog9_Deploying_GPT_OSS_on_TRTLLM.html#h200-only-using-openai-triton-kernels-for-moe">(H200 Only) Using OpenAI Triton Kernels for MoE</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog9_Deploying_GPT_OSS_on_TRTLLM.html#test-the-server-with-a-sample-request">Test the Server with a Sample Request</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog9_Deploying_GPT_OSS_on_TRTLLM.html#h200-h100-only-using-openai-triton-kernels-for-moe">(H200/H100 Only) Using OpenAI Triton Kernels for MoE</a></li>
-<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog9_Deploying_GPT_OSS_on_TRTLLM.html#troubleshooting-tips">Troubleshooting Tips</a></li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html">Optimizing DeepSeek R1 Throughput on NVIDIA Blackwell GPUs: A Deep Dive for Developers</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#introduction">Introduction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#precision-strategy">Precision strategy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#parallel-strategy">Parallel strategy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#mla-layers-optimizations">MLA Layers Optimizations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#moe-layers-optimizations">MoE Layers Optimizations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#runtime-optimizations">Runtime Optimizations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#how-to-reproduce">How to reproduce</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#future-works">Future Works</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog03_Optimizing_DeepSeek_R1_Throughput_on_NVIDIA_Blackwell_GPUs.html#acknowledgment">Acknowledgment</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog02_DeepSeek_R1_MTP_Implementation_and_Optimization.html">DeepSeek R1 MTP Implementation and Optimization</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog02_DeepSeek_R1_MTP_Implementation_and_Optimization.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog02_DeepSeek_R1_MTP_Implementation_and_Optimization.html#mtp-for-inference">MTP for inference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog02_DeepSeek_R1_MTP_Implementation_and_Optimization.html#mtp-implementation-in-tensorrt-llm">MTP implementation in TensorRT LLM</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog02_DeepSeek_R1_MTP_Implementation_and_Optimization.html#mtp-optimization-relaxed-acceptance">MTP optimization - Relaxed Acceptance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog02_DeepSeek_R1_MTP_Implementation_and_Optimization.html#evaluation">Evaluation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog02_DeepSeek_R1_MTP_Implementation_and_Optimization.html#future-works">Future Works</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog02_DeepSeek_R1_MTP_Implementation_and_Optimization.html#acknowledgment">Acknowledgment</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/tech_blog/blog01_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html">Pushing Latency Boundaries: Optimizing DeepSeek-R1 Performance on NVIDIA B200 GPUs</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog01_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#table-of-contents">Table of Contents</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog01_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#background">Background</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog01_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#implementation-configuration">Implementation Configuration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog01_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#key-optimizations">Key Optimizations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog01_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#how-to-reproduce">How to reproduce</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog01_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#future-works">Future Works</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/tech_blog/blog01_Pushing_Latency_Boundaries_Optimizing_DeepSeek-R1_Performance_on_NVIDIA_B200_GPUs.html#acknowledgment">Acknowledgment</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="blogs/Best_perf_practice_on_DeepSeek-R1_in_TensorRT-LLM.html">How to get best performance on DeepSeek-R1 in TensorRT LLM</a><ul>
@@ -1046,6 +1212,18 @@
 <li class="toctree-l1"><a class="reference internal" href="blogs/H100vsA100.html">H100 has 4.6x A100 Performance in TensorRT LLM, achieving 10,000 tok/s at 100ms to first token</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="blogs/H100vsA100.html#mlperf-on-h100-with-fp8">MLPerf on H100 with FP8</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blogs/H100vsA100.html#what-is-h100-fp8">What is H100 FP8?</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/Falcon180B-H200.html">Falcon-180B on a single H200 GPU with INT4 AWQ, and 6.7x faster Llama-70B over A100</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/Falcon180B-H200.html#falcon-180b-on-a-single-h200-with-int4-awq">Falcon-180B on a single H200 with INT4 AWQ</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/Falcon180B-H200.html#llama-70b-on-h200-up-to-6-7x-a100">Llama-70B on H200 up to 6.7x A100</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="blogs/quantization-in-TRT-LLM.html">Speed up inference with SOTA quantization techniques in TRT-LLM</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="blogs/quantization-in-TRT-LLM.html#quantization-in-tensorrt-llm">Quantization in TensorRT-LLM</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/quantization-in-TRT-LLM.html#benchmark">Benchmark</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/quantization-in-TRT-LLM.html#best-practices-to-choose-the-right-quantization-methods">Best practices to choose the right quantization methods</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blogs/quantization-in-TRT-LLM.html#whats-coming-next">What’s coming next</a></li>
 </ul>
 </li>
 </ul>
@@ -1108,9 +1286,9 @@
     class="page-toc tocsection onthispage">
     <i class="fa-solid fa-list"></i> On this page
   </div>
-  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
-    <ul class="visible nav section-nav flex-column">
-<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#">Welcome to TensorRT LLM’s Documentation!</a><ul class="visible nav section-nav flex-column">
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#">Welcome to TensorRT LLM’s Documentation!</a><ul class="pst-show_toc_level nav section-nav flex-column">
 </ul>
 </li>
 <li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#indices-and-tables">Indices and tables</a></li>
@@ -1133,8 +1311,8 @@
   
 
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
-  <script defer src="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
-<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+  <script defer src="_static/scripts/bootstrap.js?digest=0790524f97105ba85085"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=0790524f97105ba85085"></script>
 
 
   <footer class="bd-footer">
@@ -1206,9 +1384,9 @@
         <div class="footer-item">
 <div class="extra_footer">
   
-  <p>Last updated on March 20, 2026.</p>
+  <p>Last updated on May 22, 2026.</p>
   
-  <p>This page is generated by TensorRT-LLM commit <a href="https://github.com/NVIDIA/TensorRT-LLM/tree/fc947c4">fc947c4</a>.</p>
+  <p>This page is generated by TensorRT-LLM commit <a href="https://github.com/NVIDIA/TensorRT-LLM/tree/c8bef9a">c8bef9a</a>.</p>
   
 </div></div>
       

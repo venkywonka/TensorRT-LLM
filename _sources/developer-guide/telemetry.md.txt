@@ -1,0 +1,128 @@
+# Telemetry
+
+This page documents TensorRT-LLM usage telemetry. It is generated during
+the Sphinx docs build from source annotations in
+`tensorrt_llm/llmapi/llm_args.py`.
+
+Start with the [Telemetry Data Collection section in the root README](source:README.md#telemetry-data-collection) for the user-facing
+collection and opt-out overview. Use the [telemetry schema reference](source:tensorrt_llm/usage/schemas/README.md) for the wire schema and
+field-by-field payload contract.
+
+**No PII or arbitrary fields are captured.** LLM API configuration capture
+serializes only fields that are explicitly marked with
+`Field(..., telemetry=...)` and whose runtime values pass the sanitizer.
+
+## LLM API Configuration Fields
+
+The tables below are the exhaustive docs-build view of fields that can be
+captured in `llmApiConfigJson`. A field can still be absent from a specific
+payload when its parent config is unset or when the safety sanitizer rejects
+the runtime value.
+
+Captured values are limited to field-local `Field(..., telemetry=...)`
+markers and the sanitizer policy in `tensorrt_llm/usage/llmapi_config.py`.
+Model paths, tokenizer paths, prompts, outputs, raw free-form strings,
+dict/object payloads, callables, and raw `Any` values are not captured.
+
+### `TorchLlmArgs`
+
+54 telemetry-marked fields.
+
+| Captured key | Defining field | Annotation | Kind | Converter | Allowed values |
+|--------------|----------------|------------|------|-----------|----------------|
+| `attn_backend` | `TorchLlmArgs.attn_backend` | `str` | `categorical` | allowlist | `TRTLLM`, `FLASHINFER`, `FLASH_ATTENTION`, `VANILLA` |
+| `batch_wait_max_tokens_ratio` | `TorchLlmArgs.batch_wait_max_tokens_ratio` | `float` | `value` |  |  |
+| `batch_wait_timeout_iters` | `TorchLlmArgs.batch_wait_timeout_iters` | `NonNegativeInt` | `value` |  |  |
+| `batch_wait_timeout_ms` | `TorchLlmArgs.batch_wait_timeout_ms` | `NonNegativeFloat` | `value` |  |  |
+| `context_parallel_size` | `BaseLlmArgs.context_parallel_size` | `int` | `value` |  |  |
+| `cuda_graph_config.batch_sizes` | `CudaGraphConfig.batch_sizes` | `Optional[List[int]]` | `value` |  |  |
+| `cuda_graph_config.enable_padding` | `CudaGraphConfig.enable_padding` | `bool` | `value` |  |  |
+| `cuda_graph_config.max_batch_size` | `CudaGraphConfig.max_batch_size` | `NonNegativeInt` | `value` |  |  |
+| `disable_overlap_scheduler` | `TorchLlmArgs.disable_overlap_scheduler` | `bool` | `value` |  |  |
+| `dtype` | `BaseLlmArgs.dtype` | `str` | `categorical` | allowlist | `auto`, `float16`, `bfloat16`, `float32` |
+| `enable_attention_dp` | `BaseLlmArgs.enable_attention_dp` | `bool` | `value` |  |  |
+| `enable_autotuner` | `TorchLlmArgs.enable_autotuner` | `bool` | `value` |  |  |
+| `enable_chunked_prefill` | `BaseLlmArgs.enable_chunked_prefill` | `bool` | `value` |  |  |
+| `enable_iter_perf_stats` | `TorchLlmArgs.enable_iter_perf_stats` | `bool` | `value` |  |  |
+| `enable_iter_req_stats` | `TorchLlmArgs.enable_iter_req_stats` | `bool` | `value` |  |  |
+| `gpus_per_node` | `BaseLlmArgs.gpus_per_node` | `Optional[int]` | `value` |  |  |
+| `kv_cache_config.copy_on_partial_reuse` | `KvCacheConfig.copy_on_partial_reuse` | `bool` | `value` |  |  |
+| `kv_cache_config.dtype` | `KvCacheConfig.dtype` | `str` | `categorical` | allowlist | `auto`, `float16`, `bfloat16`, `float32`, `fp8`, `nvfp4` |
+| `kv_cache_config.enable_block_reuse` | `KvCacheConfig.enable_block_reuse` | `bool` | `value` |  |  |
+| `kv_cache_config.enable_partial_reuse` | `KvCacheConfig.enable_partial_reuse` | `bool` | `value` |  |  |
+| `kv_cache_config.event_buffer_max_size` | `KvCacheConfig.event_buffer_max_size` | `int` | `value` |  |  |
+| `kv_cache_config.free_gpu_memory_fraction` | `KvCacheConfig.free_gpu_memory_fraction` | `Optional[float]` | `value` |  |  |
+| `kv_cache_config.host_cache_size` | `KvCacheConfig.host_cache_size` | `Optional[int]` | `value` |  |  |
+| `kv_cache_config.max_attention_window` | `KvCacheConfig.max_attention_window` | `Optional[List[int]]` | `value` |  |  |
+| `kv_cache_config.max_gpu_total_bytes` | `KvCacheConfig.max_gpu_total_bytes` | `NonNegativeInt` | `value` |  |  |
+| `kv_cache_config.max_tokens` | `KvCacheConfig.max_tokens` | `Optional[int]` | `value` |  |  |
+| `kv_cache_config.sink_token_length` | `KvCacheConfig.sink_token_length` | `Optional[int]` | `value` |  |  |
+| `kv_cache_config.tokens_per_block` | `KvCacheConfig.tokens_per_block` | `int` | `value` |  |  |
+| `kv_cache_config.use_kv_cache_manager_v2` | `KvCacheConfig.use_kv_cache_manager_v2` | `bool` | `value` |  |  |
+| `kv_cache_config.use_uvm` | `KvCacheConfig.use_uvm` | `bool` | `value` |  |  |
+| `load_format` | `TorchLlmArgs.load_format` | `Union[str, LoadFormat]` | `categorical` | allowlist | `auto`, `dummy`, `vision_only` |
+| `max_batch_size` | `BaseLlmArgs.max_batch_size` | `Optional[int]` | `value` |  |  |
+| `max_beam_width` | `BaseLlmArgs.max_beam_width` | `Optional[int]` | `value` |  |  |
+| `max_input_len` | `BaseLlmArgs.max_input_len` | `Optional[int]` | `value` |  |  |
+| `max_num_tokens` | `BaseLlmArgs.max_num_tokens` | `Optional[int]` | `value` |  |  |
+| `max_seq_len` | `BaseLlmArgs.max_seq_len` | `Optional[int]` | `value` |  |  |
+| `orchestrator_type` | `BaseLlmArgs.orchestrator_type` | `Optional[Literal['rpc', 'ray']]` | `categorical` |  | `rpc`, `ray` |
+| `pipeline_parallel_size` | `BaseLlmArgs.pipeline_parallel_size` | `int` | `value` |  |  |
+| `print_iter_log` | `TorchLlmArgs.print_iter_log` | `bool` | `value` |  |  |
+| `sampler_force_async_worker` | `TorchLlmArgs.sampler_force_async_worker` | `bool` | `value` |  |  |
+| `scheduler_config.capacity_scheduler_policy` | `SchedulerConfig.capacity_scheduler_policy` | `CapacitySchedulerPolicy` | `categorical` |  |  |
+| `scheduler_config.context_chunking_policy` | `SchedulerConfig.context_chunking_policy` | `Optional[ContextChunkingPolicy]` | `categorical` |  |  |
+| `scheduler_config.dynamic_batch_config.dynamic_batch_moving_average_window` | `DynamicBatchConfig.dynamic_batch_moving_average_window` | `int` | `value` |  |  |
+| `scheduler_config.dynamic_batch_config.enable_batch_size_tuning` | `DynamicBatchConfig.enable_batch_size_tuning` | `bool` | `value` |  |  |
+| `scheduler_config.dynamic_batch_config.enable_max_num_tokens_tuning` | `DynamicBatchConfig.enable_max_num_tokens_tuning` | `bool` | `value` |  |  |
+| `scheduler_config.use_python_scheduler` | `SchedulerConfig.use_python_scheduler` | `bool` | `value` |  |  |
+| `scheduler_config.waiting_queue_policy` | `SchedulerConfig.waiting_queue_policy` | `WaitingQueuePolicy` | `categorical` |  |  |
+| `tensor_parallel_size` | `BaseLlmArgs.tensor_parallel_size` | `int` | `value` |  |  |
+| `torch_compile_config.capture_num_tokens` | `TorchCompileConfig.capture_num_tokens` | `Optional[List[PositiveInt]]` | `value` |  |  |
+| `torch_compile_config.enable_fullgraph` | `TorchCompileConfig.enable_fullgraph` | `bool` | `value` |  |  |
+| `torch_compile_config.enable_inductor` | `TorchCompileConfig.enable_inductor` | `bool` | `value` |  |  |
+| `torch_compile_config.enable_piecewise_cuda_graph` | `TorchCompileConfig.enable_piecewise_cuda_graph` | `bool` | `value` |  |  |
+| `torch_compile_config.enable_userbuffers` | `TorchCompileConfig.enable_userbuffers` | `bool` | `value` |  |  |
+| `torch_compile_config.max_num_streams` | `TorchCompileConfig.max_num_streams` | `PositiveInt` | `value` |  |  |
+
+### `TrtLlmArgs`
+
+35 telemetry-marked fields.
+
+| Captured key | Defining field | Annotation | Kind | Converter | Allowed values |
+|--------------|----------------|------------|------|-----------|----------------|
+| `context_parallel_size` | `BaseLlmArgs.context_parallel_size` | `int` | `value` |  |  |
+| `dtype` | `BaseLlmArgs.dtype` | `str` | `categorical` | allowlist | `auto`, `float16`, `bfloat16`, `float32` |
+| `enable_attention_dp` | `BaseLlmArgs.enable_attention_dp` | `bool` | `value` |  |  |
+| `enable_chunked_prefill` | `BaseLlmArgs.enable_chunked_prefill` | `bool` | `value` |  |  |
+| `gpus_per_node` | `BaseLlmArgs.gpus_per_node` | `Optional[int]` | `value` |  |  |
+| `kv_cache_config.copy_on_partial_reuse` | `KvCacheConfig.copy_on_partial_reuse` | `bool` | `value` |  |  |
+| `kv_cache_config.dtype` | `KvCacheConfig.dtype` | `str` | `categorical` | allowlist | `auto`, `float16`, `bfloat16`, `float32`, `fp8`, `nvfp4` |
+| `kv_cache_config.enable_block_reuse` | `KvCacheConfig.enable_block_reuse` | `bool` | `value` |  |  |
+| `kv_cache_config.enable_partial_reuse` | `KvCacheConfig.enable_partial_reuse` | `bool` | `value` |  |  |
+| `kv_cache_config.event_buffer_max_size` | `KvCacheConfig.event_buffer_max_size` | `int` | `value` |  |  |
+| `kv_cache_config.free_gpu_memory_fraction` | `KvCacheConfig.free_gpu_memory_fraction` | `Optional[float]` | `value` |  |  |
+| `kv_cache_config.host_cache_size` | `KvCacheConfig.host_cache_size` | `Optional[int]` | `value` |  |  |
+| `kv_cache_config.max_attention_window` | `KvCacheConfig.max_attention_window` | `Optional[List[int]]` | `value` |  |  |
+| `kv_cache_config.max_gpu_total_bytes` | `KvCacheConfig.max_gpu_total_bytes` | `NonNegativeInt` | `value` |  |  |
+| `kv_cache_config.max_tokens` | `KvCacheConfig.max_tokens` | `Optional[int]` | `value` |  |  |
+| `kv_cache_config.sink_token_length` | `KvCacheConfig.sink_token_length` | `Optional[int]` | `value` |  |  |
+| `kv_cache_config.tokens_per_block` | `KvCacheConfig.tokens_per_block` | `int` | `value` |  |  |
+| `kv_cache_config.use_kv_cache_manager_v2` | `KvCacheConfig.use_kv_cache_manager_v2` | `bool` | `value` |  |  |
+| `kv_cache_config.use_uvm` | `KvCacheConfig.use_uvm` | `bool` | `value` |  |  |
+| `load_format` | `BaseLlmArgs.load_format` | `Literal['auto', 'dummy']` | `categorical` |  | `auto`, `dummy` |
+| `max_batch_size` | `BaseLlmArgs.max_batch_size` | `Optional[int]` | `value` |  |  |
+| `max_beam_width` | `BaseLlmArgs.max_beam_width` | `Optional[int]` | `value` |  |  |
+| `max_input_len` | `BaseLlmArgs.max_input_len` | `Optional[int]` | `value` |  |  |
+| `max_num_tokens` | `BaseLlmArgs.max_num_tokens` | `Optional[int]` | `value` |  |  |
+| `max_seq_len` | `BaseLlmArgs.max_seq_len` | `Optional[int]` | `value` |  |  |
+| `orchestrator_type` | `BaseLlmArgs.orchestrator_type` | `Optional[Literal['rpc', 'ray']]` | `categorical` |  | `rpc`, `ray` |
+| `pipeline_parallel_size` | `BaseLlmArgs.pipeline_parallel_size` | `int` | `value` |  |  |
+| `scheduler_config.capacity_scheduler_policy` | `SchedulerConfig.capacity_scheduler_policy` | `CapacitySchedulerPolicy` | `categorical` |  |  |
+| `scheduler_config.context_chunking_policy` | `SchedulerConfig.context_chunking_policy` | `Optional[ContextChunkingPolicy]` | `categorical` |  |  |
+| `scheduler_config.dynamic_batch_config.dynamic_batch_moving_average_window` | `DynamicBatchConfig.dynamic_batch_moving_average_window` | `int` | `value` |  |  |
+| `scheduler_config.dynamic_batch_config.enable_batch_size_tuning` | `DynamicBatchConfig.enable_batch_size_tuning` | `bool` | `value` |  |  |
+| `scheduler_config.dynamic_batch_config.enable_max_num_tokens_tuning` | `DynamicBatchConfig.enable_max_num_tokens_tuning` | `bool` | `value` |  |  |
+| `scheduler_config.use_python_scheduler` | `SchedulerConfig.use_python_scheduler` | `bool` | `value` |  |  |
+| `scheduler_config.waiting_queue_policy` | `SchedulerConfig.waiting_queue_policy` | `WaitingQueuePolicy` | `categorical` |  |  |
+| `tensor_parallel_size` | `BaseLlmArgs.tensor_parallel_size` | `int` | `value` |  |  |
